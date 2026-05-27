@@ -200,7 +200,7 @@ return function(Tabs)
 		Tooltip = 'Legit aimbot with smooth mouse movement',
 	})
 	aimToggle:AddKeyPicker('AimbotKey', {
-		Default = nil,
+		Default = '',
 		Mode = 'Toggle',
 		SyncToggleState = true,
 		Text = 'Aimbot',
@@ -275,7 +275,7 @@ return function(Tabs)
 		Tooltip = 'Auto-fire when target enters FOV',
 	})
 	trigToggle:AddKeyPicker('TriggerKey', {
-		Default = nil,
+		Default = '',
 		Mode = 'Toggle',
 		SyncToggleState = true,
 		Text = 'Trigger',
@@ -393,7 +393,7 @@ return function(Tabs)
 		Default = false,
 	})
 	skEnToggle:AddKeyPicker('SkeletonKey', {
-		Default = nil,
+		Default = '',
 		Mode = 'Toggle',
 		SyncToggleState = true,
 		Text = 'Skeleton',
@@ -433,7 +433,7 @@ return function(Tabs)
 		Default = false,
 	})
 	bx3Toggle:AddKeyPicker('Box3DKey', {
-		Default = nil,
+		Default = '',
 		Mode = 'Toggle',
 		SyncToggleState = true,
 		Text = '3D Boxes',
@@ -505,7 +505,7 @@ return function(Tabs)
 		Default = false,
 	})
 	chEnToggle:AddKeyPicker('ChamsKey', {
-		Default = nil,
+		Default = '',
 		Mode = 'Toggle',
 		SyncToggleState = true,
 		Text = 'Chams',
@@ -604,7 +604,7 @@ return function(Tabs)
 		Default = false,
 	})
 	radToggle:AddKeyPicker('RadarKey', {
-		Default = nil,
+		Default = '',
 		Mode = 'Toggle',
 		SyncToggleState = true,
 		Text = 'Radar',
@@ -655,7 +655,7 @@ return function(Tabs)
 		Default = false,
 	})
 	avToggle:AddKeyPicker('AimViewerKey', {
-		Default = nil,
+		Default = '',
 		Mode = 'Toggle',
 		SyncToggleState = true,
 		Text = 'Aim Viewer',
