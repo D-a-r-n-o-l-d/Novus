@@ -408,6 +408,7 @@ local DEFAULT_HITBOX_SIZE = Vector3.new(2, 2, 2)
 Config.Aimbot = {
     Enabled        = false,
     CameraAim      = false,
+    AutoFire       = false,
     TeamCheck      = false,
     DistanceCheck  = true,
     VisibilityCheck= false,
@@ -422,6 +423,7 @@ Config.Aimbot = {
 Config.Silent = {
     Enabled        = false,
     CameraAim      = false,
+    AutoFire       = false,
     TeamCheck      = false,
     DistanceCheck  = true,
     VisibilityCheck= false,
@@ -1674,8 +1676,8 @@ RunService.RenderStepped:Connect(function()
         if hit then
             if Config.Aimbot.CameraAim then
                 CameraAim(hit[3], Config.Aimbot.Sensitivity / 100)
-                -- Auto-fire when sensitivity is 100% (instant lock)
-                if Config.Aimbot.Sensitivity >= 100 and mouse1press and mouse1release then
+                -- Auto-fire when sensitivity is 100% and toggle is on
+                if Config.Aimbot.Sensitivity >= 100 and Config.Aimbot.AutoFire and mouse1press and mouse1release then
                     local now = tick()
                     if not _autoFireLast or (now - _autoFireLast) >= (Config.Trigger.FireRate / 1000) then
                         _autoFireLast = now
@@ -1724,7 +1726,7 @@ RunService.RenderStepped:Connect(function()
                             Config.Trigger.Prediction
                         )
                         if not again then break end
-                        RunService.RenderStepped:Wait()
+                        task.wait(math.max(Config.Trigger.FireRate / 1000, 0.01))
                     end
                 end
                 mouse1release()
@@ -2172,6 +2174,7 @@ do
     AimDep:AddToggle('AimbotVisCheck', { Text = 'Visibility Check', Default = Config.Aimbot.VisibilityCheck })
     AimDep:AddToggle('AimbotPred', { Text = 'Prediction', Default = Config.Aimbot.Prediction })
     AimDep:AddInput('AimbotSens', { Default = tostring(Config.Aimbot.Sensitivity), Numeric = true, Finished = true, Text = 'Sensitivity', Placeholder = tostring(Config.Aimbot.Sensitivity) })
+    AimDep:AddToggle('AimbotAutoFire', { Text = 'Auto-Fire (100% sens only)', Default = false })
     AimDep:AddInput('AimbotFOV', { Default = tostring(Config.Aimbot.FOVRadius), Numeric = true, Finished = true, Text = 'FOV Radius', Placeholder = tostring(Config.Aimbot.FOVRadius) })
     AimDep:AddInput('AimbotDist', { Default = tostring(Config.Aimbot.DistanceLimit), Numeric = true, Finished = true, Text = 'Distance Limit', Placeholder = tostring(Config.Aimbot.DistanceLimit) })
     AimDep:AddDropdown('AimbotPriority', { Text = 'Priority', Default = 'Closest', Values = {'Closest', 'Head', 'HumanoidRootPart', 'Random'} })
@@ -2182,6 +2185,7 @@ do
         local c = Config.Aimbot
         c.Enabled = Toggles.AimbotEnabled.Value
         c.CameraAim = Toggles.AimbotCameraAim.Value
+        c.AutoFire = Toggles.AimbotAutoFire.Value
         c.TeamCheck = Toggles.AimbotTeamCheck.Value
         c.DistanceCheck = Toggles.AimbotDistCheck.Value
         c.VisibilityCheck = Toggles.AimbotVisCheck.Value
@@ -2192,7 +2196,7 @@ do
         c.PriorityIndex = table.find({'Closest', 'Head', 'HumanoidRootPart', 'Random'}, Options.AimbotPriority.Value) or 1
         c.PriorityList = {'Closest', 'Head', 'HumanoidRootPart', 'Random'}
     end
-    for _, ev in ipairs({Toggles.AimbotEnabled, Toggles.AimbotCameraAim, Toggles.AimbotTeamCheck, Toggles.AimbotDistCheck, Toggles.AimbotVisCheck, Toggles.AimbotPred}) do ev:OnChanged(wireAim) end
+    for _, ev in ipairs({Toggles.AimbotEnabled, Toggles.AimbotCameraAim, Toggles.AimbotAutoFire, Toggles.AimbotTeamCheck, Toggles.AimbotDistCheck, Toggles.AimbotVisCheck, Toggles.AimbotPred}) do ev:OnChanged(wireAim) end
     for _, ev in ipairs({Options.AimbotSens, Options.AimbotFOV, Options.AimbotDist, Options.AimbotPriority}) do ev:OnChanged(wireAim) end
 end
 
@@ -2203,6 +2207,7 @@ do
     Toggles.TriggerEnabled:AddKeyPicker('TriggerKey', { Default = 'None', Mode = 'Hold', SyncToggleState = false, Text = 'Trigger Bot' })
     local TrigDep = Trigger:AddDependencyBox()
     TrigDep:AddToggle('TriggerTeamCheck', { Text = 'Team Check', Default = Config.Trigger.TeamCheck })
+    TrigDep:AddToggle('TriggerHoldClick', { Text = 'Hold Click', Default = Config.Trigger.HoldMouse })
     TrigDep:AddToggle('TriggerDistCheck', { Text = 'Distance Check', Default = Config.Trigger.DistanceCheck })
     TrigDep:AddToggle('TriggerVisCheck', { Text = 'Visibility Check', Default = Config.Trigger.VisibilityCheck })
     TrigDep:AddToggle('TriggerPred', { Text = 'Prediction', Default = Config.Trigger.Prediction })
@@ -2217,6 +2222,7 @@ do
     local function wireTrig()
         local c = Config.Trigger
         c.Enabled = Toggles.TriggerEnabled.Value
+        c.HoldMouse = Toggles.TriggerHoldClick.Value
         c.TeamCheck = Toggles.TriggerTeamCheck.Value
         c.DistanceCheck = Toggles.TriggerDistCheck.Value
         c.VisibilityCheck = Toggles.TriggerVisCheck.Value
@@ -2228,8 +2234,8 @@ do
         c.PriorityIndex = table.find({'Closest', 'Head', 'HumanoidRootPart', 'Random'}, Options.TriggerPriority.Value) or 1
         c.PriorityList = {'Closest', 'Head', 'HumanoidRootPart', 'Random'}
     end
-    for _, ev in ipairs({Toggles.TriggerEnabled, Toggles.TriggerTeamCheck, Toggles.TriggerDistCheck, Toggles.TriggerVisCheck, Toggles.TriggerPred}) do ev:OnChanged(wireTrig) end
-    for _, ev in ipairs({Options.TriggerDelay, Options.TriggerFOV, Options.TriggerDist, Options.TriggerPriority}) do ev:OnChanged(wireTrig) end
+    for _, ev in ipairs({Toggles.TriggerEnabled, Toggles.TriggerHoldClick, Toggles.TriggerTeamCheck, Toggles.TriggerDistCheck, Toggles.TriggerVisCheck, Toggles.TriggerPred}) do ev:OnChanged(wireTrig) end
+    for _, ev in ipairs({Options.TriggerDelay, Options.TriggerFireRate, Options.TriggerFOV, Options.TriggerDist, Options.TriggerPriority}) do ev:OnChanged(wireTrig) end
 end
 
 -- Prediction settings
