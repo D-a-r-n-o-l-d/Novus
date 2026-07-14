@@ -407,7 +407,7 @@ local DEFAULT_HITBOX_SIZE = Vector3.new(2, 2, 2)
 
 Config.Aimbot = {
     Enabled        = false,
-    AlwaysOn       = false,
+    CameraAim      = false,
     TeamCheck      = false,
     DistanceCheck  = true,
     VisibilityCheck= false,
@@ -421,6 +421,7 @@ Config.Aimbot = {
 
 Config.Silent = {
     Enabled        = false,
+    CameraAim      = false,
     TeamCheck      = false,
     DistanceCheck  = true,
     VisibilityCheck= false,
@@ -441,6 +442,7 @@ Config.Trigger = {
     VisibilityCheck= false,
     Prediction     = false,
     Delay          = 0.15,
+    FireRate       = 100,
     FOVRadius      = 25,
     DistanceLimit  = 250,
     PriorityList   = {"Closest", "Head", "HumanoidRootPart", "Random"},
@@ -1561,6 +1563,22 @@ local function AimAt(hitbox, sensitivity)
     end
 end
 
+local function CameraAim(targetPart, sensitivity)
+    if not targetPart then return end
+    local targetPos = targetPart.Position
+    -- Apply prediction
+    if Config.Aimbot.Prediction then
+        local distance = (targetPos - Camera.CFrame.Position).Magnitude
+        local travelTime = distance / math.max(Config.Prediction.ProjectileSpeed, 1)
+        targetPos = SolveTrajectory(targetPos, targetPart.AssemblyLinearVelocity, travelTime, Config.Prediction.Gravity, Config.Prediction.GravityCorrection)
+    end
+    local camPos = Camera.CFrame.Position
+    local targetDir = (targetPos - camPos).Unit
+    local currentDir = Camera.CFrame.LookVector
+    local smoothDir = currentDir:Lerp(targetDir, math.clamp(sensitivity, 0.01, 1))
+    Camera.CFrame = CFrame.lookAt(camPos, camPos + smoothDir * 10)
+end
+
 ---------------------------------------------------------------------
 -- SILENT AIM: Disabled for now. Will be rewritten with Potassium-native
 -- engine-level hooks instead of hookmetamethod (which Adonis detects).
@@ -1654,7 +1672,21 @@ RunService.RenderStepped:Connect(function()
             Config.Aimbot.Prediction
         )
         if hit then
-            AimAt(hit, Config.Aimbot.Sensitivity / 100)
+            if Config.Aimbot.CameraAim then
+                CameraAim(hit[3], Config.Aimbot.Sensitivity / 100)
+                -- Auto-fire when sensitivity is 100% (instant lock)
+                if Config.Aimbot.Sensitivity >= 100 and mouse1press and mouse1release then
+                    local now = tick()
+                    if not _autoFireLast or (now - _autoFireLast) >= (Config.Trigger.FireRate / 1000) then
+                        _autoFireLast = now
+                        mouse1press()
+                        task.wait(0.01)
+                        mouse1release()
+                    end
+                end
+            else
+                AimAt(hit, Config.Aimbot.Sensitivity / 100)
+            end
         end
     end
 
@@ -2134,6 +2166,7 @@ do
     Aimbot:AddToggle('AimbotEnabled', { Text = 'Aimbot', Default = Config.Aimbot.Enabled })
     Toggles.AimbotEnabled:AddKeyPicker('AimbotKey', { Default = 'None', Mode = 'Hold', SyncToggleState = false, Text = 'Aimbot' })
     local AimDep = Aimbot:AddDependencyBox()
+    AimDep:AddToggle('AimbotCameraAim', { Text = 'Camera Aim (snap)', Default = Config.Aimbot.CameraAim })
     AimDep:AddToggle('AimbotTeamCheck', { Text = 'Team Check', Default = Config.Aimbot.TeamCheck })
     AimDep:AddToggle('AimbotDistCheck', { Text = 'Distance Check', Default = Config.Aimbot.DistanceCheck })
     AimDep:AddToggle('AimbotVisCheck', { Text = 'Visibility Check', Default = Config.Aimbot.VisibilityCheck })
@@ -2148,6 +2181,7 @@ do
     local function wireAim()
         local c = Config.Aimbot
         c.Enabled = Toggles.AimbotEnabled.Value
+        c.CameraAim = Toggles.AimbotCameraAim.Value
         c.TeamCheck = Toggles.AimbotTeamCheck.Value
         c.DistanceCheck = Toggles.AimbotDistCheck.Value
         c.VisibilityCheck = Toggles.AimbotVisCheck.Value
@@ -2158,7 +2192,7 @@ do
         c.PriorityIndex = table.find({'Closest', 'Head', 'HumanoidRootPart', 'Random'}, Options.AimbotPriority.Value) or 1
         c.PriorityList = {'Closest', 'Head', 'HumanoidRootPart', 'Random'}
     end
-    for _, ev in ipairs({Toggles.AimbotEnabled, Toggles.AimbotTeamCheck, Toggles.AimbotDistCheck, Toggles.AimbotVisCheck, Toggles.AimbotPred}) do ev:OnChanged(wireAim) end
+    for _, ev in ipairs({Toggles.AimbotEnabled, Toggles.AimbotCameraAim, Toggles.AimbotTeamCheck, Toggles.AimbotDistCheck, Toggles.AimbotVisCheck, Toggles.AimbotPred}) do ev:OnChanged(wireAim) end
     for _, ev in ipairs({Options.AimbotSens, Options.AimbotFOV, Options.AimbotDist, Options.AimbotPriority}) do ev:OnChanged(wireAim) end
 end
 
@@ -2173,6 +2207,7 @@ do
     TrigDep:AddToggle('TriggerVisCheck', { Text = 'Visibility Check', Default = Config.Trigger.VisibilityCheck })
     TrigDep:AddToggle('TriggerPred', { Text = 'Prediction', Default = Config.Trigger.Prediction })
     TrigDep:AddInput('TriggerDelay', { Default = tostring(Config.Trigger.Delay * 1000), Numeric = true, Finished = true, Text = 'Delay', Placeholder = tostring(Config.Trigger.Delay * 1000) })
+    TrigDep:AddInput('TriggerFireRate', { Default = tostring(Config.Trigger.FireRate), Numeric = true, Finished = true, Text = 'Fire Rate (ms)', Placeholder = tostring(Config.Trigger.FireRate) })
     TrigDep:AddInput('TriggerFOV', { Default = tostring(Config.Trigger.FOVRadius), Numeric = true, Finished = true, Text = 'FOV Radius', Placeholder = tostring(Config.Trigger.FOVRadius) })
     TrigDep:AddInput('TriggerDist', { Default = tostring(Config.Trigger.DistanceLimit), Numeric = true, Finished = true, Text = 'Distance Limit', Placeholder = tostring(Config.Trigger.DistanceLimit) })
     TrigDep:AddDropdown('TriggerPriority', { Text = 'Priority', Default = 'Closest', Values = {'Closest', 'Head', 'HumanoidRootPart', 'Random'} })
@@ -2187,6 +2222,7 @@ do
         c.VisibilityCheck = Toggles.TriggerVisCheck.Value
         c.Prediction = Toggles.TriggerPred.Value
         c.Delay = tonumber(Options.TriggerDelay.Value) / 1000
+        c.FireRate = tonumber(Options.TriggerFireRate.Value)
         c.FOVRadius = tonumber(Options.TriggerFOV.Value)
         c.DistanceLimit = tonumber(Options.TriggerDist.Value)
         c.PriorityIndex = table.find({'Closest', 'Head', 'HumanoidRootPart', 'Random'}, Options.TriggerPriority.Value) or 1
