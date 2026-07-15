@@ -1675,7 +1675,14 @@ RunService.RenderStepped:Connect(function()
             if plr and plr.Parent and char and char.Parent and part and part.Parent and hum and hum.Health > 0 then
                 if not Config.Aimbot.TeamCheck or InEnemyTeam(true, plr) then
                     if not Config.Aimbot.DistanceCheck or WithinReach(true, (part.Position - Camera.CFrame.Position).Magnitude, Config.Aimbot.DistanceLimit) then
-                        local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                        local targetPos = part.Position
+                        -- Apply prediction for lock aim
+                        if Config.Aimbot.Prediction and Config.Prediction.ProjectileSpeed > 0 then
+                            local dist = (targetPos - Camera.CFrame.Position).Magnitude
+                            local travelTime = dist / Config.Prediction.ProjectileSpeed
+                            targetPos = SolveTrajectory(targetPos, part.AssemblyLinearVelocity, travelTime, Config.Prediction.Gravity, Config.Prediction.GravityCorrection)
+                        end
+                        local screenPos, onScreen = Camera:WorldToViewportPoint(targetPos)
                         if onScreen then
                             local mousePos = UIS:GetMouseLocation()
                             local mag = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
@@ -1768,6 +1775,7 @@ RunService.RenderStepped:Connect(function()
                 end
                 mouse1release()
             end
+            task.wait(math.max(Config.Trigger.FireRate / 1000, 0.01))
             TriggerBusy = false
         end)
     end
