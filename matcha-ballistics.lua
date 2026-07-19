@@ -9,13 +9,13 @@ local Camera=workspace.CurrentCamera
 local RS=game:GetService("RunService")
 
 local lastFire=0;local mode="Camlock"
-local kbWidget;local masterOn=true;local camTarget
+local kbWidget;local masterOn=true
 local lockTarget=nil
 local aimParts={"Head","HumanoidRootPart","Torso","UpperTorso","LowerTorso"}
 local aimPart="Head"
 -- Config values captured from UI callbacks
 local fovVal=100;local speedVal=2000;local gravVal=196.2
-local smoothVal=0.45;local sensVal=5;local fireRateVal=100
+local sensVal=5;local fireRateVal=100
 
 local function Predict(o,p,v,s,g,c)
     c=c or 2;local t=(p-o).Magnitude/s
@@ -92,7 +92,7 @@ RS.RenderStepped:Connect(function()
 
         local modeIdx=UI.GetValue("modecombo")or 0
         local nm=(modeIdx==0)and"Camlock"or"Mouse"
-        if nm~=mode then mode=nm;camTarget=nil end
+        if nm~=mode then mode=nm;lockTarget=nil end
 
         local fov=fovVal
         if UI.GetValue("showfov")==true and active then
@@ -107,13 +107,13 @@ RS.RenderStepped:Connect(function()
             end
         else fovC.Visible=false end
 
-        if not active or not LP.Character then camTarget=nil;lockTarget=nil;return end
+        if not active or not LP.Character then lockTarget=nil;return end
         local ox,oy
         if mode=="Mouse"then
             local mx,my=LP:GetMouse().X,LP:GetMouse().Y
             if type(mx)=="number"then ox,oy=mx,my else ox,oy=Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2 end
         else ox,oy=Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2 end
-        local aimPos=GetTarget(ox,oy);if not aimPos then camTarget=nil;return end
+        local aimPos=GetTarget(ox,oy);if not aimPos then lockTarget=nil;return end
         local sp,on=WorldToScreen(aimPos)
 
         if mode=="Mouse"and sp and on then
@@ -122,9 +122,7 @@ RS.RenderStepped:Connect(function()
             mousemoverel((sp.X-mx)*sensVal/10,(sp.Y-my)*sensVal/10)
         end
         if mode=="Camlock" then
-            if not camTarget then camTarget=aimPos end
-            camTarget=camTarget+(aimPos-camTarget)*smoothVal
-            pcall(Camera.lookAt,Camera.Position,camTarget)
+            pcall(Camera.lookAt,Camera.Position,aimPos)
         end
         if UI.GetValue("autofire")==true then
             local n=tick();local r=fireRateVal/1000
@@ -151,7 +149,7 @@ UI.AddTab("Ballistics",function(tab)
     ctrl:Toggle("master","Enabled",true,function(v)masterOn=v end)
     kbWidget=ctrl:Keybind("aim_kb",defaultKey,"hold")
     ctrl:Tip("Hold key to aim — click to rebind")
-    ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)mode=(idx==0)and"Camlock"or"Mouse";camTarget=nil end)
+    ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)mode=(idx==0)and"Camlock"or"Mouse";lockTarget=nil end)
 
     local tgt=tab:Section("Targeting","Left")
     tgt:Combo("aimpart","Part",aimParts,0,function(idx)aimPart=aimParts[idx+1]or"Head"end)
@@ -166,8 +164,7 @@ UI.AddTab("Ballistics",function(tab)
     pred:SliderFloat("gravity","Gravity",0,500,196.2,"%.1f",function(v)gravVal=v end)
 
     local aim=tab:Section("Aiming","Right")
-    aim:SliderFloat("smooth","Smoothness",0.05,1.0,0.45,"%.2f",function(v)smoothVal=v end)
-    aim:SliderFloat("sens","Sensitivity",0.5,20,5,"%.1f",function(v)sensVal=v end)
+    aim:SliderFloat("sens","Sensitivity",0.5,60,5,"%.1f",function(v)sensVal=v end)
     aim:Toggle("autofire","Auto Fire",false)
     aim:SliderInt("firerate","Rate(ms)",50,2000,100,function(v)fireRateVal=v end)
 
