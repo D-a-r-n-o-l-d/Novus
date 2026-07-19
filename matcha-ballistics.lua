@@ -52,10 +52,14 @@ testC.Color=Color3.fromRGB(255,0,0);testC.Transparency=0.5;testC.Position=Vector
 
 local fovC=Drawing.new("Circle");fovC.NumSides=72;fovC.Thickness=1;fovC.Visible=false;fovC.ZIndex=999
 fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
-
+-- Render
+local dc=0
+local kbWidget
 RS.RenderStepped:Connect(function()
+    dc=dc+1
     local ok,err=pcall(function()
-        local active=(UI.GetValue("aim_kb")==true)
+        local active=(kbWidget and kbWidget.IsEnabled and kbWidget:IsEnabled())
+        if dc%120==1 then print(string.format("[Ballistics] active=%s",tostring(active)))end
 
         local modeIdx=UI.GetValue("modecombo")or 0
         local nm=(modeIdx==0)and"Camlock"or"Mouse"
@@ -93,9 +97,8 @@ end)
 print("Loading Ballistics v3.4...")
 UI.AddTab("Ballistics",function(tab)
     local ctrl=tab:Section("Controls","Left")
-    ctrl:Toggle("aim_enabled","Aimbot",false)
-    ctrl:Keybind("aim_kb",0x58,"hold")
-    ctrl:Tip("Click keybind to rebind")
+    kbWidget=ctrl:Keybind("aim_kb",0x58,"hold")
+    ctrl:Tip("Hold key to aim — click to rebind")
     ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)mode=(idx==0)and"Camlock"or"Mouse";smoothCF=nil end)
 
     local tgt=tab:Section("Targeting","Left")
