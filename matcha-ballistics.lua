@@ -69,22 +69,24 @@ fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
 -- Key state
 local enabled = false
 local prevKeys = {}
+local toggleKey = 0x58   -- default X
+local holdKey = 0xA4     -- default LAlt
 
 -- Render
 RS.RenderStepped:Connect(function()
     local ok,err=pcall(function()
         -- Poll keys with edge detection
-        local nowX = (iskeypressed(0x58) == true)     -- X key
-        local nowAlt = (iskeypressed(0xA4) == true)   -- LAlt
+        local nowToggle = (iskeypressed(toggleKey) == true)
+        local nowHold = (iskeypressed(holdKey) == true)
 
-        -- Toggle on X press
-        if nowX and not prevKeys.X then
+        -- Toggle on key press
+        if nowToggle and not prevKeys.Toggle then
             enabled = not enabled
         end
-        prevKeys.X = nowX
-        prevKeys.Alt = nowAlt
+        prevKeys.Toggle = nowToggle
+        prevKeys.Hold = nowHold
 
-        local active = enabled or nowAlt
+        local active = enabled or nowHold
         local modeIdx=UI.GetValue("modecombo")or 0
         local newMode=(modeIdx==0)and"Camlock"or"Mouse"
         if newMode~=mode then mode=newMode;smoothCF=nil end
@@ -129,12 +131,12 @@ RS.RenderStepped:Connect(function()
 end)
 
 print("Loading Ballistics v3.2...")
+local kbTog, kbHold
 UI.AddTab("Ballistics",function(tab)
     local ctrl = tab:Section("Controls", "Left")
-    ctrl:Button("Toggle Aim (X)", function()
-        enabled = not enabled
-    end)
-    ctrl:Tip("X=toggle  LAlt=hold")
+    kbTog = ctrl:Keybind("togglekey", toggleKey, "toggle")
+    kbHold = ctrl:Keybind("holdkey", holdKey, "hold")
+    ctrl:Tip("Click to rebind — X=toggle  LAlt=hold")
     ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)
         mode=(idx==0)and"Camlock"or"Mouse";smoothCF=nil
     end)
@@ -161,5 +163,18 @@ UI.AddTab("Ballistics",function(tab)
     vis:ColorPicker("fovcolor",200,200,200,200,function(c,a)
         fovC.Color=c;fovC.Transparency=1-(a or 1)
     end)
+end)
+-- Sync key rebinds from UI widgets
+task.spawn(function()
+    while task.wait(0.5) do
+        if kbTog and kbTog.GetKey then
+            local k = kbTog:GetKey()
+            if type(k) == "number" and k ~= 0 then toggleKey = k end
+        end
+        if kbHold and kbHold.GetKey then
+            local k = kbHold:GetKey()
+            if type(k) == "number" and k ~= 0 then holdKey = k end
+        end
+    end
 end)
 print("Ballistics v3.2 loaded")
