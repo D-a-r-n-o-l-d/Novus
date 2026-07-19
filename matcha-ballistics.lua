@@ -11,11 +11,13 @@ local RS=game:GetService("RunService")
 local lastFire=0;local mode="Camlock"
 local kbWidget;local masterOn=true
 local lockTarget=nil
+local teamCheck=false;local aliveCheck=true;local showFOV=true;local autofire=false
+local prediction=true;local lockaim=true
 local aimParts={"Head","HumanoidRootPart","Torso","UpperTorso","LowerTorso"}
 local aimPart="Head"
 -- Config values captured from UI callbacks
 local fovVal=100;local speedVal=2000;local gravVal=196.2
-local sensVal=5;local fireRateVal=100
+local sensVal=5;local fireRateVal=100;local predOffset=0
 
 local function Predict(o,p,v,s,g,c)
     c=c or 2;local t=(p-o).Magnitude/s
@@ -26,14 +28,14 @@ end
 
 local function IsValidTarget(ch)
     if not ch then return false end
-    if(UI.GetValue("alivecheck")==true)then
+    if aliveCheck then
         local h=ch:FindFirstChildOfClass("Humanoid");if not h or h.Health<=0 then return false end
     end
     return true
 end
 
 local function GetTarget(ox,oy)
-    local lockOn=(UI.GetValue("lockaim")==true)
+    local lockOn=lockaim
     
     -- Check lock is still valid (by name — Player object refs may differ in Matcha)
     if lockTarget then
@@ -47,7 +49,8 @@ local function GetTarget(ox,oy)
         local pt=lockTarget:FindFirstChild(aimPart or "Head")or lockTarget:FindFirstChild("HumanoidRootPart")or lockTarget:FindFirstChild("Head")
         if pt then
             local pos=pt.Position;local vel=pt.AssemblyLinearVelocity or pt.Velocity or Vector3.new()
-            if(UI.GetValue("prediction")==true)then pos=Predict(Camera.Position,pos,vel,speedVal,gravVal)end
+            if(prediction)then pos=Predict(Camera.Position,pos,vel,speedVal,gravVal)end
+            pos=pos+vel*(predOffset/1000)
             return pos
         else lockTarget=nil end
     end
@@ -58,8 +61,7 @@ local function GetTarget(ox,oy)
     local bestChar=nil
     for _,p in ipairs(Players:GetPlayers())do
         local s=(p.Name==LP.Name)
-        if not s and(UI.GetValue("teamcheck")==true)and p.Team and LP.Team and p.Team==LP.Team then s=true end
-        if not s then
+        if not s and teamCheck and p.Team and LP.Team and p.Team.Name==LP.Team.Name then s=true end
             local ch=p.Character;if not ch then s=true end
             if not s and not IsValidTarget(ch)then s=true end
             if not s then
@@ -67,7 +69,8 @@ local function GetTarget(ox,oy)
                 if not pt then s=true end
                 if not s then
                     local pos=pt.Position;local vel=pt.AssemblyLinearVelocity or pt.Velocity or Vector3.new()
-                    if(UI.GetValue("prediction")==true)then pos=Predict(Camera.Position,pos,vel,speedVal,gravVal)end
+                    if(prediction)then pos=Predict(Camera.Position,pos,vel,speedVal,gravVal)end
+                    pos=pos+vel*(predOffset/1000)
                     local ok,sp,on=pcall(WorldToScreen,pos)
                     if ok and on and sp and sp.X and sp.Y then
                         local d=math.sqrt((sp.X-ox)^2+(sp.Y-oy)^2)
@@ -76,7 +79,6 @@ local function GetTarget(ox,oy)
                 end
             end
         end
-    end
     
     -- Lock onto best target (exclude self)
     if lockOn and bestChar and bp and bestChar.Name~=LP.Name then lockTarget=bestChar end
@@ -95,7 +97,7 @@ RS.RenderStepped:Connect(function()
         if nm~=mode then mode=nm;lockTarget=nil end
 
         local fov=fovVal
-        if UI.GetValue("showfov")==true and active then
+        if showFOV and active then
             local vs=Camera.ViewportSize
             if vs and vs.X then
                 if mode=="Mouse"then
@@ -124,7 +126,7 @@ RS.RenderStepped:Connect(function()
         if mode=="Camlock" then
             pcall(Camera.lookAt,Camera.Position,aimPos)
         end
-        if UI.GetValue("autofire")==true then
+        if autofire then
             local n=tick();local r=fireRateVal/1000
             if n-lastFire>=r then mouse1click();lastFire=n end
         end
@@ -154,22 +156,23 @@ UI.AddTab("Ballistics",function(tab)
     local tgt=tab:Section("Targeting","Left")
     tgt:Combo("aimpart","Part",aimParts,0,function(idx)aimPart=aimParts[idx+1]or"Head"end)
     fovWidget=tgt:SliderInt("fov","FOV Radius",10,800,100,function(v)fovVal=v end)
-    tgt:Toggle("teamcheck","Team Check",false)
-    tgt:Toggle("alivecheck","Alive Check",true)
-    tgt:Toggle("prediction","Prediction",true)
-    tgt:Toggle("lockaim","Lock Aim",true)
+    tgt:Toggle("teamcheck","Team Check",false,function(v)teamCheck=v end)
+    tgt:Toggle("alivecheck","Alive Check",true,function(v)aliveCheck=v end)
+    tgt:Toggle("prediction","Prediction",true,function(v)prediction=v end)
+    tgt:Toggle("lockaim","Lock Aim",true,function(v)lockaim=v end)
 
     local pred=tab:Section("Bullet Physics","Left")
     pred:SliderInt("speed","Bullet Speed",50,10000,2000,function(v)speedVal=v end)
-    pred:SliderFloat("gravity","Gravity",0,500,196.2,"%.1f",function(v)gravVal=v end)
+    pred:SliderFloat("grav","Gravity",0,500,196.2,"%.1f",function(v)gravVal=v end)
+    pred:SliderInt("offset","Predict Offset(ms)",0,300,0,function(v)predOffset=v end)
 
     local aim=tab:Section("Aiming","Right")
     aim:SliderFloat("sens","Sensitivity",0.5,60,5,"%.1f",function(v)sensVal=v end)
-    aim:Toggle("autofire","Auto Fire",false)
+    aim:Toggle("autofire","Auto Fire",false,function(v)autofire=v end)
     aim:SliderInt("firerate","Rate(ms)",50,2000,100,function(v)fireRateVal=v end)
 
     local vis=tab:Section("Visuals","Right")
-    vis:Toggle("showfov","FOV Circle",true)
+    vis:Toggle("showfov","FOV Circle",true,function(v)showFOV=v end)
     vis:ColorPicker("fovcolor",200,200,200,200,function(c,a)fovC.Color=c;fovC.Transparency=1-(a or 1)end)
 end)
 -- Periodically save keybind
