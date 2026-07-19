@@ -74,7 +74,6 @@ RS.RenderStepped:Connect(function()
 
         if mode=="Mouse"and sp and on then
             local cx,cy=Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2
-            local s=(UI.GetValue("sens")or 5)/10
             mousemoverel((sp.X-cx)*sensVal/10,(sp.Y-cy)*sensVal/10)
         end
         if mode=="Camlock" then
