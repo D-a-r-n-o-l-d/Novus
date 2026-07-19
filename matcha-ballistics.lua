@@ -19,7 +19,7 @@ local function Predict(o,p,v,s,g,c)
 end
 
 local function GetTarget()
-    local fov=fovWidget and fovWidget.value or 100
+    local fov=(fovWidget and fovWidget.GetValue and fovWidget:GetValue())or 100
     local vs=Camera.ViewportSize;if not vs or not vs.X then return nil end
     local c=vs/2;local bd,bp=fov,nil
     for _,p in ipairs(Players:GetPlayers())do
@@ -59,7 +59,7 @@ RS.RenderStepped:Connect(function()
         local nm=(modeIdx==0)and"Camlock"or"Mouse"
         if nm~=mode then mode=nm;smoothCF=nil end
 
-        local fov=fovWidget and fovWidget.value or 100
+        local fov=(fovWidget and fovWidget.GetValue and fovWidget:GetValue())or 100
         if UI.GetValue("showfov")==true and active then
             local vs=Camera.ViewportSize
             if vs and vs.X then fovC.Position=vs/2;fovC.Radius=fov;fovC.Visible=true end
