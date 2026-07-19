@@ -10,7 +10,9 @@ local RS=game:GetService("RunService")
 
 local lastFire=0;local mode="Camlock"
 local kbWidget;local masterOn=true;local camTarget
-local lockTarget=nil  -- locked target character
+local lockTarget=nil
+local aimParts={"Head","HumanoidRootPart","Torso","UpperTorso","LowerTorso"}
+local aimPart="Head"
 -- Config values captured from UI callbacks
 local fovVal=100;local speedVal=2000;local gravVal=196.2
 local smoothVal=0.45;local sensVal=5;local fireRateVal=100
@@ -42,7 +44,7 @@ local function GetTarget(ox,oy)
     
     -- If locked, just return the locked target's position
     if lockTarget then
-        local pt=lockTarget:FindFirstChild(UI.GetValue("aimpart")or"Head")or lockTarget:FindFirstChild("HumanoidRootPart")or lockTarget:FindFirstChild("Head")
+        local pt=lockTarget:FindFirstChild(aimPart or "Head")or lockTarget:FindFirstChild("HumanoidRootPart")or lockTarget:FindFirstChild("Head")
         if pt then
             local pos=pt.Position;local vel=pt.AssemblyLinearVelocity or pt.Velocity or Vector3.new()
             if(UI.GetValue("prediction")==true)then pos=Predict(Camera.Position,pos,vel,speedVal,gravVal)end
@@ -61,7 +63,7 @@ local function GetTarget(ox,oy)
             local ch=p.Character;if not ch then s=true end
             if not s and not IsValidTarget(ch)then s=true end
             if not s then
-                local pt=ch:FindFirstChild(UI.GetValue("aimpart")or"Head")or ch:FindFirstChild("HumanoidRootPart")or ch:FindFirstChild("Head")
+                local pt=ch:FindFirstChild(aimPart or "Head")or ch:FindFirstChild("HumanoidRootPart")or ch:FindFirstChild("Head")
                 if not pt then s=true end
                 if not s then
                     local pos=pt.Position;local vel=pt.AssemblyLinearVelocity or pt.Velocity or Vector3.new()
@@ -152,7 +154,7 @@ UI.AddTab("Ballistics",function(tab)
     ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)mode=(idx==0)and"Camlock"or"Mouse";camTarget=nil end)
 
     local tgt=tab:Section("Targeting","Left")
-    tgt:Combo("aimpart","Part",{"Head","HumanoidRootPart","Torso","UpperTorso","LowerTorso"},0)
+    tgt:Combo("aimpart","Part",aimParts,0,function(idx)aimPart=aimParts[idx+1]or"Head"end)
     fovWidget=tgt:SliderInt("fov","FOV Radius",10,800,100,function(v)fovVal=v end)
     tgt:Toggle("teamcheck","Team Check",false)
     tgt:Toggle("alivecheck","Alive Check",true)
