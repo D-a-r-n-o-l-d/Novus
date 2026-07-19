@@ -9,7 +9,7 @@ local Camera=workspace.CurrentCamera
 local RS=game:GetService("RunService")
 
 local smoothCF=nil;local lastFire=0;local mode="Camlock"
-local kbWidget
+local kbWidget;local masterOn=true
 -- Config values captured from UI callbacks
 local fovVal=100;local speedVal=2000;local gravVal=196.2
 local smoothVal=0.45;local sensVal=5;local fireRateVal=100
@@ -56,7 +56,7 @@ fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
 
 RS.RenderStepped:Connect(function()
     local ok,err=pcall(function()
-        local active=(kbWidget and kbWidget.IsEnabled and kbWidget:IsEnabled())
+        local active=masterOn and(kbWidget and kbWidget.IsEnabled and kbWidget:IsEnabled())
 
         local modeIdx=UI.GetValue("modecombo")or 0
         local nm=(modeIdx==0)and"Camlock"or"Mouse"
@@ -73,8 +73,9 @@ RS.RenderStepped:Connect(function()
         local sp,on=WorldToScreen(aimPos)
 
         if mode=="Mouse"and sp and on then
-            local cx,cy=Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2
-            mousemoverel((sp.X-cx)*sensVal/10,(sp.Y-cy)*sensVal/10)
+            local mx,my=LP:GetMouse().X,LP:GetMouse().Y
+            if type(mx)~="number"then local vs=Camera.ViewportSize;mx=vs.X/2;my=vs.Y/2 end
+            mousemoverel((sp.X-mx)*sensVal/10,(sp.Y-my)*sensVal/10)
         end
         if mode=="Camlock" then
             local cp=Camera.Position;local cf=CFrame.lookAt(cp,aimPos)
@@ -93,6 +94,7 @@ end)
 
 UI.AddTab("Ballistics",function(tab)
     local ctrl=tab:Section("Controls","Left")
+    ctrl:Toggle("master","Enabled",true,function(v)masterOn=v end)
     kbWidget=ctrl:Keybind("aim_kb",0x58,"hold")
     ctrl:Tip("Hold key to aim — click to rebind")
     ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)mode=(idx==0)and"Camlock"or"Mouse";smoothCF=nil end)
