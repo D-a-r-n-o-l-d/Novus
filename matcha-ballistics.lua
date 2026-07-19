@@ -66,7 +66,7 @@ testC.Position=Vector2.new(400,400);testC.Radius=50
 local fovC=Drawing.new("Circle")
 fovC.NumSides=72;fovC.Thickness=1;fovC.Visible=false;fovC.ZIndex=999
 fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
-
+-- Render
 RS.RenderStepped:Connect(function()
     local ok,err=pcall(function()
         local active=(UI.GetValue("toggle")==true)or(UI.GetValue("hold")==true)
@@ -90,12 +90,10 @@ RS.RenderStepped:Connect(function()
         local sp,on=WorldToScreen(aimPos)
 
         if mode=="Mouse"and sp and on then
-            local mx,my=LP:GetMouse().X,LP:GetMouse().Y
-            if mx and my then
-                local s=(UI.GetValue("sens")or 5)/10
-                mousemoverel(0,(sp.Y-my)*s,0)
-                mousemoverel(0,0,(sp.X-mx)*s)
-            end
+            local cx,cy=Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2
+            local s=(UI.GetValue("sens")or 5)/10
+            -- Matcha: mousemoverel(0, vertical, horizontal)
+            mousemoverel(0,(sp.Y-cy)*s,(sp.X-cx)*s)
         end
 
         if mode=="Camlock" then
