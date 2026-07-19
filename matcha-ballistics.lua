@@ -67,9 +67,22 @@ local fovC=Drawing.new("Circle")
 fovC.NumSides=72;fovC.Thickness=1;fovC.Visible=false;fovC.ZIndex=999
 fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
 
+-- Key state
+local enabled = false
+local prevKeys = {}
+
 RS.RenderStepped:Connect(function()
     local ok,err=pcall(function()
-        local active=(UI.GetValue("aim_toggle")==true)or(UI.GetValue("aim_hold")==true)
+        -- Read key codes from keybind widgets, poll iskeypressed directly
+        local toggleKey = (kbToggle and kbToggle.GetKey and kbToggle:GetKey()) or 0x58
+        local holdKey = (kbHold and kbHold.GetKey and kbHold:GetKey()) or 0xA4
+
+        -- Edge detect toggle key for press-to-toggle
+        local nowToggle = (iskeypressed(toggleKey) == true)
+        if nowToggle and not prevKeys.Toggle then enabled = not enabled end
+        prevKeys.Toggle = nowToggle
+
+        local active = enabled or (iskeypressed(holdKey) == true)
         local modeIdx=UI.GetValue("modecombo")or 0
         local newMode=(modeIdx==0)and"Camlock"or"Mouse"
         if newMode~=mode then mode=newMode;smoothCF=nil end
@@ -114,10 +127,12 @@ RS.RenderStepped:Connect(function()
 end)
 
 print("Loading Ballistics v3.3...")
+local kbToggle, kbHold
 UI.AddTab("Ballistics",function(tab)
     local ctrl=tab:Section("Controls","Left")
-    ctrl:Keybind("aim_toggle",0x58,"toggle")  -- click to rebind
-    ctrl:Keybind("aim_hold",0xA4,"hold")      -- click to rebind
+    kbToggle=ctrl:Keybind("aim_toggle",0x58,"hold")
+    kbHold=ctrl:Keybind("aim_hold",0xA4,"hold")
+    ctrl:Button("Toggle Aim",function()enabled=not enabled end)
     ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)
         mode=(idx==0)and"Camlock"or"Mouse";smoothCF=nil
     end)
