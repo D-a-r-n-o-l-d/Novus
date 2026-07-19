@@ -92,10 +92,9 @@ RS.RenderStepped:Connect(function()
         if mode=="Mouse"and sp and on then
             local cx,cy=Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2
             local s=(UI.GetValue("sens")or 5)/10
-            -- Matcha: mousemoveabs(0, x, y) for absolute position
-            local targetX = cx + (sp.X - cx) * s
-            local targetY = cy + (sp.Y - cy) * s
-            mousemoveabs(0, targetX, targetY)
+            local dx=(sp.X-cx)*s
+            local dy=(sp.Y-cy)*s
+            mousemoverel(dx,dy)
         end
 
         if mode=="Camlock" then
