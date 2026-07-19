@@ -69,7 +69,10 @@ fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
 -- Render
 RS.RenderStepped:Connect(function()
     local ok,err=pcall(function()
-        local active=(UI.GetValue("toggle")==true)or(UI.GetValue("hold")==true)
+        local toggleOn = UI.GetValue("enabled") == true
+        local keyOn = UI.GetValue("aimkey") == true
+        local holdOn = UI.GetValue("holdkey") == true
+        local active = toggleOn or keyOn or holdOn
         local modeIdx=UI.GetValue("modecombo")or 0
         local newMode=(modeIdx==0)and"Camlock"or"Mouse"
         if newMode~=mode then mode=newMode;smoothCF=nil end
@@ -115,12 +118,11 @@ end)
 
 print("Loading Ballistics v3.2...")
 UI.AddTab("Ballistics",function(tab)
-    local ctrl=tab:Section("Controls","Left")
-    ctrl:Toggle("toggle","Enabled")
-    local tkb=ctrl:Keybind("toggle",0x58,"toggle")
-    tkb:AddToHotkey("Aimbot","toggle")
-    ctrl:Keybind("hold",0xA4,"hold")
-    ctrl:Tip("Hold to temporarily aim")
+    local ctrl = tab:Section("Controls", "Left")
+    ctrl:Toggle("enabled", "Enabled", false)
+    ctrl:Keybind("aimkey", 0x58, "toggle")
+    ctrl:Keybind("holdkey", 0xA4, "hold")
+    ctrl:Tip("X=toggle  LAlt=hold")
     ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)
         mode=(idx==0)and"Camlock"or"Mouse";smoothCF=nil
     end)
