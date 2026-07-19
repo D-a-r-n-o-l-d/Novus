@@ -93,7 +93,8 @@ RS.RenderStepped:Connect(function()
             local mx,my=LP:GetMouse().X,LP:GetMouse().Y
             if mx and my then
                 local s=(UI.GetValue("sens")or 5)/10
-                mousemoverel(0,(sp.Y-my)*s,(sp.X-mx)*s)
+                mousemoverel(0,(sp.Y-my)*s,0)
+                mousemoverel(0,0,(sp.X-mx)*s)
             end
         end
 
