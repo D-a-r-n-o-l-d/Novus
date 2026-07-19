@@ -9,8 +9,6 @@ local Camera=workspace.CurrentCamera
 local RS=game:GetService("RunService")
 
 local smoothCF=nil;local lastFire=0;local mode="Camlock"
-local aimKey=0x02  -- default RMB (hold to aim)
-local capturing=false;local capSeen={}
 
 local function Predict(o,p,v,s,g,c)
     c=c or 2;local t=(p-o).Magnitude/s
@@ -57,21 +55,7 @@ fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
 
 RS.RenderStepped:Connect(function()
     local ok,err=pcall(function()
-        -- Hold to aim
-        local active=(iskeypressed(aimKey)==true)
-
-        -- Key capture mode (edge-detect: only capture NEWLY pressed keys)
-        if capturing then
-            for vk=0x01,0xA4 do
-                local down=iskeypressed(vk)
-                if down and not capSeen[vk] then
-                    aimKey=vk;capturing=false;capSeen={}
-                    notify("Aim Key Set","VK: "..tostring(vk),3)
-                    break
-                end
-                capSeen[vk]=down
-            end
-        end
+        local active=(UI.GetValue("aim_kb")==true)
 
         local modeIdx=UI.GetValue("modecombo")or 0
         local nm=(modeIdx==0)and"Camlock"or"Mouse"
@@ -107,12 +91,11 @@ RS.RenderStepped:Connect(function()
 end)
 
 print("Loading Ballistics v3.4...")
-local setKeyBtn
 UI.AddTab("Ballistics",function(tab)
     local ctrl=tab:Section("Controls","Left")
-    setKeyBtn=ctrl:Button("Aim Key: RMB",function()
-        capturing=true;capSeen={}
-    end)
+    ctrl:Toggle("aim_enabled","Aimbot",false)
+    ctrl:Keybind("aim_kb",0x58,"hold")
+    ctrl:Tip("Click keybind to rebind")
     ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)mode=(idx==0)and"Camlock"or"Mouse";smoothCF=nil end)
 
     local tgt=tab:Section("Targeting","Left")
@@ -136,4 +119,4 @@ UI.AddTab("Ballistics",function(tab)
     vis:Toggle("showfov","FOV Circle",true)
     vis:ColorPicker("fovcolor",200,200,200,200,function(c,a)fovC.Color=c;fovC.Transparency=1-(a or 1)end)
 end)
-print("Ballistics v3.4 loaded — hold RMB to aim, click 'Aim Key' to rebind")
+print("Ballistics v3.4 loaded")
