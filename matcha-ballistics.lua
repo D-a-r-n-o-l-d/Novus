@@ -35,9 +35,9 @@ end
 local function GetTarget(ox,oy)
     local lockOn=(UI.GetValue("lockaim")==true)
     
-    -- Check lock is still valid
+    -- Check lock is still valid (by name — Player object refs may differ in Matcha)
     if lockTarget then
-        if not lockOn or not IsValidTarget(lockTarget)then
+        if not lockOn or not IsValidTarget(lockTarget) or lockTarget.Name==LP.Name then
             lockTarget=nil
         end
     end
@@ -57,7 +57,7 @@ local function GetTarget(ox,oy)
     local bd,bp=fov,nil
     local bestChar=nil
     for _,p in ipairs(Players:GetPlayers())do
-        local s=(p==LP)
+        local s=(p.Name==LP.Name)
         if not s and(UI.GetValue("teamcheck")==true)and p.Team and LP.Team and p.Team==LP.Team then s=true end
         if not s then
             local ch=p.Character;if not ch then s=true end
@@ -78,8 +78,8 @@ local function GetTarget(ox,oy)
         end
     end
     
-    -- Lock onto best target
-    if lockOn and bestChar and bp then lockTarget=bestChar end
+    -- Lock onto best target (exclude self)
+    if lockOn and bestChar and bp and bestChar.Name~=LP.Name then lockTarget=bestChar end
     return bp
 end
 
