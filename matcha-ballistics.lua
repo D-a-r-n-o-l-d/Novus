@@ -1,5 +1,5 @@
 --[[
-    Matcha Ballistics v3.2 — working baseline
+    Matcha Ballistics v3.3
 ]]
 
 repeat task.wait() until game and game:GetService("Players")
@@ -66,27 +66,10 @@ testC.Position=Vector2.new(400,400);testC.Radius=50
 local fovC=Drawing.new("Circle")
 fovC.NumSides=72;fovC.Thickness=1;fovC.Visible=false;fovC.ZIndex=999
 fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
--- Key state
-local enabled = false
-local prevKeys = {}
-local toggleKey = 0x58   -- default X
-local holdKey = 0xA4     -- default LAlt
 
--- Render
 RS.RenderStepped:Connect(function()
     local ok,err=pcall(function()
-        -- Poll keys with edge detection
-        local nowToggle = (iskeypressed(toggleKey) == true)
-        local nowHold = (iskeypressed(holdKey) == true)
-
-        -- Toggle on key press
-        if nowToggle and not prevKeys.Toggle then
-            enabled = not enabled
-        end
-        prevKeys.Toggle = nowToggle
-        prevKeys.Hold = nowHold
-
-        local active = enabled or nowHold
+        local active=(UI.GetValue("aim_toggle")==true)or(UI.GetValue("aim_hold")==true)
         local modeIdx=UI.GetValue("modecombo")or 0
         local newMode=(modeIdx==0)and"Camlock"or"Mouse"
         if newMode~=mode then mode=newMode;smoothCF=nil end
@@ -130,13 +113,11 @@ RS.RenderStepped:Connect(function()
     if not ok then print("[Ballistics]",err)end
 end)
 
-print("Loading Ballistics v3.2...")
-local kbTog, kbHold
+print("Loading Ballistics v3.3...")
 UI.AddTab("Ballistics",function(tab)
-    local ctrl = tab:Section("Controls", "Left")
-    kbTog = ctrl:Keybind("togglekey", toggleKey, "toggle")
-    kbHold = ctrl:Keybind("holdkey", holdKey, "hold")
-    ctrl:Tip("Click to rebind — X=toggle  LAlt=hold")
+    local ctrl=tab:Section("Controls","Left")
+    ctrl:Keybind("aim_toggle",0x58,"toggle")  -- click to rebind
+    ctrl:Keybind("aim_hold",0xA4,"hold")      -- click to rebind
     ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)
         mode=(idx==0)and"Camlock"or"Mouse";smoothCF=nil
     end)
@@ -164,17 +145,4 @@ UI.AddTab("Ballistics",function(tab)
         fovC.Color=c;fovC.Transparency=1-(a or 1)
     end)
 end)
--- Sync key rebinds from UI widgets
-task.spawn(function()
-    while task.wait(0.5) do
-        if kbTog and kbTog.GetKey then
-            local k = kbTog:GetKey()
-            if type(k) == "number" and k ~= 0 then toggleKey = k end
-        end
-        if kbHold and kbHold.GetKey then
-            local k = kbHold:GetKey()
-            if type(k) == "number" and k ~= 0 then holdKey = k end
-        end
-    end
-end)
-print("Ballistics v3.2 loaded")
+print("Ballistics v3.3 loaded")
