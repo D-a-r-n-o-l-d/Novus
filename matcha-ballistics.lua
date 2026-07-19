@@ -66,13 +66,25 @@ testC.Position=Vector2.new(400,400);testC.Radius=50
 local fovC=Drawing.new("Circle")
 fovC.NumSides=72;fovC.Thickness=1;fovC.Visible=false;fovC.ZIndex=999
 fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
+-- Key state
+local enabled = false
+local prevKeys = {}
+
 -- Render
 RS.RenderStepped:Connect(function()
     local ok,err=pcall(function()
-        local toggleOn = UI.GetValue("enabled") == true
-        local keyOn = UI.GetValue("aimkey") == true
-        local holdOn = UI.GetValue("holdkey") == true
-        local active = toggleOn or keyOn or holdOn
+        -- Poll keys with edge detection
+        local nowX = (iskeypressed(0x58) == true)     -- X key
+        local nowAlt = (iskeypressed(0xA4) == true)   -- LAlt
+
+        -- Toggle on X press
+        if nowX and not prevKeys.X then
+            enabled = not enabled
+        end
+        prevKeys.X = nowX
+        prevKeys.Alt = nowAlt
+
+        local active = enabled or nowAlt
         local modeIdx=UI.GetValue("modecombo")or 0
         local newMode=(modeIdx==0)and"Camlock"or"Mouse"
         if newMode~=mode then mode=newMode;smoothCF=nil end
@@ -119,9 +131,9 @@ end)
 print("Loading Ballistics v3.2...")
 UI.AddTab("Ballistics",function(tab)
     local ctrl = tab:Section("Controls", "Left")
-    ctrl:Toggle("enabled", "Enabled", false)
-    ctrl:Keybind("aimkey", 0x58, "toggle")
-    ctrl:Keybind("holdkey", 0xA4, "hold")
+    ctrl:Button("Toggle Aim (X)", function()
+        enabled = not enabled
+    end)
     ctrl:Tip("X=toggle  LAlt=hold")
     ctrl:Combo("modecombo","Mode",{"Camlock","Mouse"},0,function(idx)
         mode=(idx==0)and"Camlock"or"Mouse";smoothCF=nil
