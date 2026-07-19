@@ -21,10 +21,10 @@ local function Predict(o,p,v,s,g,c)
     return p+v*t+gv*t*t/c
 end
 
-local function GetTarget()
+local function GetTarget(ox,oy)
     local fov=fovVal
     local vs=Camera.ViewportSize;if not vs or not vs.X then return nil end
-    local c=vs/2;local bd,bp=fov,nil
+    local bd,bp=fov,nil
     for _,p in ipairs(Players:GetPlayers())do
         local s=(p==LP)
         if not s and(UI.GetValue("teamcheck")==true)and p.Team and LP.Team and p.Team==LP.Team then s=true end
@@ -41,7 +41,7 @@ local function GetTarget()
                     if(UI.GetValue("prediction")==true)then pos=Predict(Camera.Position,pos,vel,speedVal,gravVal)end
                     local ok,sp,on=pcall(WorldToScreen,pos)
                     if ok and on and sp and sp.X and sp.Y then
-                        local d=math.sqrt((sp.X-c.X)^2+(sp.Y-c.Y)^2)
+                        local d=math.sqrt((sp.X-ox)^2+(sp.Y-oy)^2)
                         if d<bd then bd,bp=d,pos end
                     end
                 end
@@ -65,11 +65,23 @@ RS.RenderStepped:Connect(function()
         local fov=fovVal
         if UI.GetValue("showfov")==true and active then
             local vs=Camera.ViewportSize
-            if vs and vs.X then fovC.Position=vs/2;fovC.Radius=fov;fovC.Visible=true end
+            if vs and vs.X then
+                if mode=="Mouse"then
+                    local mx,my=LP:GetMouse().X,LP:GetMouse().Y
+                    if type(mx)=="number"then fovC.Position=Vector2.new(mx,my)
+                    else fovC.Position=vs/2 end
+                else fovC.Position=vs/2 end
+                fovC.Radius=fov;fovC.Visible=true
+            end
         else fovC.Visible=false end
 
         if not active or not LP.Character then smoothCF=nil;return end
-        local aimPos=GetTarget();if not aimPos then smoothCF=nil;return end
+        local ox,oy
+        if mode=="Mouse"then
+            local mx,my=LP:GetMouse().X,LP:GetMouse().Y
+            if type(mx)=="number"then ox,oy=mx,my else ox,oy=Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2 end
+        else ox,oy=Camera.ViewportSize.X/2,Camera.ViewportSize.Y/2 end
+        local aimPos=GetTarget(ox,oy);if not aimPos then smoothCF=nil;return end
         local sp,on=WorldToScreen(aimPos)
 
         if mode=="Mouse"and sp and on then
