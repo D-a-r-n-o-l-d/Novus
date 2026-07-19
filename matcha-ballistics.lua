@@ -1,4 +1,4 @@
--- Matcha Ballistics v3.5 — aimbot + camlock with prediction
+-- Matcha Ballistics v3.6 — aimbot + camlock with prediction
 
 repeat task.wait() until game and game:GetService("Players")
 local Players=game:GetService("Players")
@@ -9,6 +9,7 @@ local Camera=workspace.CurrentCamera
 local RS=game:GetService("RunService")
 
 local smoothCF=nil;local lastFire=0;local mode="Camlock"
+local kbWidget;local fovWidget
 
 local function Predict(o,p,v,s,g,c)
     c=c or 2;local t=(p-o).Magnitude/s
@@ -18,7 +19,7 @@ local function Predict(o,p,v,s,g,c)
 end
 
 local function GetTarget()
-    local fov=UI.GetValue("fov")or 100
+    local fov=fovWidget and fovWidget.value or 100
     local vs=Camera.ViewportSize;if not vs or not vs.X then return nil end
     local c=vs/2;local bd,bp=fov,nil
     for _,p in ipairs(Players:GetPlayers())do
@@ -47,11 +48,9 @@ local function GetTarget()
     return bp
 end
 
--- FOV Circle
 local fovC=Drawing.new("Circle");fovC.NumSides=72;fovC.Thickness=1;fovC.Visible=false;fovC.ZIndex=999
 fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
--- Render
-local kbWidget
+
 RS.RenderStepped:Connect(function()
     local ok,err=pcall(function()
         local active=(kbWidget and kbWidget.IsEnabled and kbWidget:IsEnabled())
@@ -60,9 +59,10 @@ RS.RenderStepped:Connect(function()
         local nm=(modeIdx==0)and"Camlock"or"Mouse"
         if nm~=mode then mode=nm;smoothCF=nil end
 
+        local fov=fovWidget and fovWidget.value or 100
         if UI.GetValue("showfov")==true and active then
             local vs=Camera.ViewportSize
-            if vs and vs.X then fovC.Position=vs/2;fovC.Radius=UI.GetValue("fov")or 100;fovC.Visible=true end
+            if vs and vs.X then fovC.Position=vs/2;fovC.Radius=fov;fovC.Visible=true end
         else fovC.Visible=false end
 
         if not active or not LP.Character then smoothCF=nil;return end
@@ -97,23 +97,23 @@ UI.AddTab("Ballistics",function(tab)
 
     local tgt=tab:Section("Targeting","Left")
     tgt:Combo("aimpart","Part",{"Head","HumanoidRootPart","Torso","UpperTorso","LowerTorso"},0)
-    tgt:SliderInt("fov","FOV Radius",10,800,100)
+    fovWidget=tgt:SliderInt("fov","FOV Radius",10,800,100,function()end)
     tgt:Toggle("teamcheck","Team Check",false)
     tgt:Toggle("alivecheck","Alive Check",true)
     tgt:Toggle("prediction","Prediction",true)
 
     local pred=tab:Section("Bullet Physics","Left")
-    pred:SliderInt("speed","Bullet Speed",50,10000,2000)
-    pred:SliderFloat("gravity","Gravity",0,500,196.2,"%.1f")
+    pred:SliderInt("speed","Bullet Speed",50,10000,2000,function()end)
+    pred:SliderFloat("gravity","Gravity",0,500,196.2,"%.1f",function()end)
 
     local aim=tab:Section("Aiming","Right")
-    aim:SliderFloat("smooth","Smoothness",0.05,1.0,0.45,"%.2f")
-    aim:SliderFloat("sens","Sensitivity",0.5,20,5,"%.1f")
+    aim:SliderFloat("smooth","Smoothness",0.05,1.0,0.45,"%.2f",function()end)
+    aim:SliderFloat("sens","Sensitivity",0.5,20,5,"%.1f",function()end)
     aim:Toggle("autofire","Auto Fire",false)
-    aim:SliderInt("firerate","Rate(ms)",50,2000,100)
+    aim:SliderInt("firerate","Rate(ms)",50,2000,100,function()end)
 
     local vis=tab:Section("Visuals","Right")
     vis:Toggle("showfov","FOV Circle",true)
     vis:ColorPicker("fovcolor",200,200,200,200,function(c,a)fovC.Color=c;fovC.Transparency=1-(a or 1)end)
 end)
-print("Ballistics v3.5 loaded")
+print("Ballistics v3.6 loaded")
