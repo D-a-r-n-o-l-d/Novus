@@ -1,4 +1,4 @@
---[[ Matcha Ballistics v3.4 ]]
+-- Matcha Ballistics v3.5 — aimbot + camlock with prediction
 
 repeat task.wait() until game and game:GetService("Players")
 local Players=game:GetService("Players")
@@ -47,19 +47,14 @@ local function GetTarget()
     return bp
 end
 
-local testC=Drawing.new("Circle");testC.NumSides=72;testC.Thickness=2;testC.Visible=true;testC.ZIndex=9999
-testC.Color=Color3.fromRGB(255,0,0);testC.Transparency=0.5;testC.Position=Vector2.new(400,400);testC.Radius=50
-
+-- FOV Circle
 local fovC=Drawing.new("Circle");fovC.NumSides=72;fovC.Thickness=1;fovC.Visible=false;fovC.ZIndex=999
 fovC.Color=Color3.fromRGB(200,200,200);fovC.Transparency=0.7
 -- Render
-local dc=0
 local kbWidget
 RS.RenderStepped:Connect(function()
-    dc=dc+1
     local ok,err=pcall(function()
         local active=(kbWidget and kbWidget.IsEnabled and kbWidget:IsEnabled())
-        if dc%120==1 then print(string.format("[Ballistics] active=%s",tostring(active)))end
 
         local modeIdx=UI.GetValue("modecombo")or 0
         local nm=(modeIdx==0)and"Camlock"or"Mouse"
@@ -94,7 +89,6 @@ RS.RenderStepped:Connect(function()
     if not ok then print("[Ballistics]",err)end
 end)
 
-print("Loading Ballistics v3.4...")
 UI.AddTab("Ballistics",function(tab)
     local ctrl=tab:Section("Controls","Left")
     kbWidget=ctrl:Keybind("aim_kb",0x58,"hold")
@@ -122,4 +116,4 @@ UI.AddTab("Ballistics",function(tab)
     vis:Toggle("showfov","FOV Circle",true)
     vis:ColorPicker("fovcolor",200,200,200,200,function(c,a)fovC.Color=c;fovC.Transparency=1-(a or 1)end)
 end)
-print("Ballistics v3.4 loaded")
+print("Ballistics v3.5 loaded")
