@@ -440,6 +440,7 @@ Config.Silent = {
     DistanceLimit  = 250,
     PriorityList   = {"Closest", "Head", "HumanoidRootPart", "Random"},
     PriorityIndex  = 1,
+    SpoofOrigin    = false,  -- Wallbang: ray starts at target position
 }
 
 Config.Trigger = {
@@ -1633,20 +1634,30 @@ OldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             if method == "Raycast" then
                 local origin = args[1]
                 if typeof(origin) == "Vector3" then
-                    args[2] = SilentTarget[3].Position - origin
+                    if Config.Silent.SpoofOrigin then
+                        -- Wallbang: ray starts inside target, always hits
+                        args[1] = SilentTarget[3].Position
+                        args[2] = Vector3.new(0, -1, 0)
+                    else
+                        args[2] = SilentTarget[3].Position - origin
+                    end
                     return OldNamecall(self, unpack(args))
                 end
             elseif method == "FindPartOnRay"
             or method == "FindPartOnRayWithIgnoreList"
             or method == "FindPartOnRayWithWhitelist" then
                 if typeof(args[1]) == "Ray" then
-                    args[1] = Ray.new(args[1].Origin, SilentTarget[3].Position - args[1].Origin)
+                    if Config.Silent.SpoofOrigin then
+                        args[1] = Ray.new(SilentTarget[3].Position, Vector3.new(0, -1, 0))
+                    else
+                        args[1] = Ray.new(args[1].Origin, SilentTarget[3].Position - args[1].Origin)
+                    end
                     return OldNamecall(self, unpack(args))
                 end
             end
         elseif self == Camera then
             if method == "ScreenPointToRay" or method == "ViewportPointToRay" then
-                return Ray.new(SilentTarget[3].Position, SilentTarget[3].Position - Camera.CFrame.Position)
+                return Ray.new(SilentTarget[3].Position, Vector3.new(0, -1, 0))
             elseif method == "WorldToScreenPoint" or method == "WorldToViewportPoint" then
                 args[1] = SilentTarget[3].Position
                 return OldNamecall(self, unpack(args))
@@ -2365,6 +2376,7 @@ do
     SilentDep:AddToggle('SilentDistCheck', { Text = 'Distance Check', Default = Config.Silent.DistanceCheck })
     SilentDep:AddToggle('SilentVisCheck', { Text = 'Visibility Check', Default = Config.Silent.VisibilityCheck })
     SilentDep:AddToggle('SilentPred', { Text = 'Prediction', Default = Config.Silent.Prediction })
+    SilentDep:AddToggle('SilentSpoofOrigin', { Text = 'Wallbang (Magic Bullet)', Default = Config.Silent.SpoofOrigin })
     SilentDep:AddDropdown('SilentPriority', { Text = 'Aimpoint', Default = 'Closest', Values = {'Closest', 'Head', 'HumanoidRootPart', 'Random'} })
     SilentDep:AddInput('SilentHitChance', { Default = tostring(Config.Silent.HitChance), Numeric = true, Finished = true, Text = 'Hit Chance %', Placeholder = tostring(Config.Silent.HitChance) })
     SilentDep:AddInput('SilentFOV', { Default = tostring(Config.Silent.FOVRadius), Numeric = true, Finished = true, Text = 'FOV Radius', Placeholder = tostring(Config.Silent.FOVRadius) })
@@ -2377,13 +2389,14 @@ do
         c.DistanceCheck = Toggles.SilentDistCheck.Value
         c.VisibilityCheck = Toggles.SilentVisCheck.Value
         c.Prediction = Toggles.SilentPred.Value
+        c.SpoofOrigin = Toggles.SilentSpoofOrigin.Value
         c.PriorityIndex = table.find({'Closest', 'Head', 'HumanoidRootPart', 'Random'}, Options.SilentPriority.Value) or 1
         c.PriorityList = {'Closest', 'Head', 'HumanoidRootPart', 'Random'}
         c.HitChance = tonumber(Options.SilentHitChance.Value)
         c.FOVRadius = tonumber(Options.SilentFOV.Value)
         c.DistanceLimit = tonumber(Options.SilentDist.Value)
     end
-    for _, ev in ipairs({Toggles.SilentEnabled, Toggles.SilentTeamCheck, Toggles.SilentDistCheck, Toggles.SilentVisCheck, Toggles.SilentPred, Options.SilentPriority, Options.SilentHitChance, Options.SilentFOV, Options.SilentDist}) do
+    for _, ev in ipairs({Toggles.SilentEnabled, Toggles.SilentTeamCheck, Toggles.SilentDistCheck, Toggles.SilentVisCheck, Toggles.SilentPred, Toggles.SilentSpoofOrigin, Options.SilentPriority, Options.SilentHitChance, Options.SilentFOV, Options.SilentDist}) do
         ev:OnChanged(wireSilent)
     end
 end
