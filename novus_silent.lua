@@ -1624,6 +1624,15 @@ OldIndex = hookmetamethod(game, "__index", function(self, index)
     return OldIndex(self, index)
 end)
 
+local function MagicOrigin(aimPos)
+    -- Random offset 0.1–1 stud from aimpoint; direction back toward it
+    local dist = 0.1 + math.random() * 0.9
+    local dir = Vector3.new(math.random() * 2 - 1, math.random() * 2 - 1, math.random() * 2 - 1)
+    if dir.Magnitude < 0.001 then dir = Vector3.new(0, 1, 0) end
+    dir = dir.Unit
+    return aimPos + dir * dist, aimPos - (aimPos + dir * dist)
+end
+
 local OldNamecall
 OldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     if checkcaller() then return OldNamecall(self, ...) end
@@ -1635,9 +1644,10 @@ OldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 local origin = args[1]
                 if typeof(origin) == "Vector3" then
                     if Config.Silent.SpoofOrigin then
-                        -- Wallbang: ray starts inside target, always hits
-                        args[1] = SilentTarget[3].Position
-                        args[2] = Vector3.new(0, -1, 0)
+                        -- Magic bullet: random origin 0.1–1 stud around aimpoint, aimed back at it
+                        local o, d = MagicOrigin(SilentTarget[3].Position)
+                        args[1] = o
+                        args[2] = d
                     else
                         args[2] = SilentTarget[3].Position - origin
                     end
@@ -1648,7 +1658,8 @@ OldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             or method == "FindPartOnRayWithWhitelist" then
                 if typeof(args[1]) == "Ray" then
                     if Config.Silent.SpoofOrigin then
-                        args[1] = Ray.new(SilentTarget[3].Position, Vector3.new(0, -1, 0))
+                        local o, d = MagicOrigin(SilentTarget[3].Position)
+                        args[1] = Ray.new(o, d)
                     else
                         args[1] = Ray.new(args[1].Origin, SilentTarget[3].Position - args[1].Origin)
                     end
@@ -1657,7 +1668,10 @@ OldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             end
         elseif self == Camera then
             if method == "ScreenPointToRay" or method == "ViewportPointToRay" then
-                return Ray.new(SilentTarget[3].Position, Vector3.new(0, -1, 0))
+                if Config.Silent.SpoofOrigin then
+                    local o, d = MagicOrigin(SilentTarget[3].Position)
+                    return Ray.new(o, d)
+                end
             elseif method == "WorldToScreenPoint" or method == "WorldToViewportPoint" then
                 args[1] = SilentTarget[3].Position
                 return OldNamecall(self, unpack(args))
