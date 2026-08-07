@@ -346,6 +346,7 @@ local FrameTimer = tick()
 local FrameCounter = 0
 local FPS = 60
 game:GetService('RunService').RenderStepped:Connect(function()
+    if Library.Unloaded then return end
     FrameCounter += 1
     if (tick() - FrameTimer) >= 1 then
         FPS = FrameCounter
@@ -424,6 +425,7 @@ Config.Aimbot = {
     DistanceLimit  = 250,
     PriorityList   = {"Closest", "Head", "HumanoidRootPart"},
     PriorityIndex  = 1,
+    IgnoreForceFielded = false,
 }
 
 Config.Silent = {
@@ -441,6 +443,7 @@ Config.Silent = {
     PriorityList   = {"Closest", "Head", "HumanoidRootPart", "Random"},
     PriorityIndex  = 1,
     SpoofOrigin    = false,  -- Wallbang: ray starts at target position
+    IgnoreForceFielded = false,
 }
 
 Config.Trigger = {
@@ -457,6 +460,7 @@ Config.Trigger = {
     DistanceLimit  = 250,
     PriorityList   = {"Closest", "Head", "HumanoidRootPart", "Random"},
     PriorityIndex  = 1,
+    IgnoreForceFielded = false,
 }
 
 Config.Movement = {
@@ -469,6 +473,12 @@ Config.Prediction = {
     ProjectileSpeed   = 1000,
     Gravity           = 0,
     GravityCorrection = 0,
+}
+
+Config.ESP = {
+    VisibleColor       = Color3.fromRGB(0, 255, 0),
+    HiddenColor        = Color3.fromRGB(255, 60, 60),
+    ForceFieldMarker   = true,
 }
 
 Config.AimVisuals = {
@@ -502,6 +512,123 @@ Sense.teamSettings.friendly.name        = true
 Sense.teamSettings.friendly.distance    = false
 Sense.teamSettings.friendly.tracer      = false
 Sense.teamSettings.friendly.chams       = true
+
+---------------------------------------------------------------------
+-- ESP FILTERS: ForceField + Visibility (via Sense whitelist)
+---------------------------------------------------------------------
+-- Sense.whitelist: when non-empty, only whitelisted UserIds are drawn.
+local function HasForceField(char)
+    return char and char:FindFirstChildOfClass("ForceField") ~= nil
+end
+
+-- Per-player ESP state cache: updated every frame via native occlusion test
+local EspState = {}
+
+-- Engine-accelerated vischeck: GetPartsObscuringTarget is one native call per
+-- player (no Lua raycasts). Returns parts blocking the target from the camera.
+local function UpdateEspState()
+    local localChar = LocalPlayer.Character
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == LocalPlayer then continue end
+        local char = plr.Character
+        if not char then
+            EspState[plr] = nil
+            continue
+        end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then
+            EspState[plr] = nil
+            continue
+        end
+        local head = char:FindFirstChild("Head")
+        if not head then continue end
+
+        local visible = #Camera:GetPartsObscuringTarget(
+            { head.Position },
+            { localChar, char }
+        ) == 0
+
+        EspState[plr] = {
+            visible = visible,
+            forcefield = HasForceField(char),
+        }
+    end
+end
+
+-- Per-frame state refresh (native occlusion test, cheap)
+RunService.RenderStepped:Connect(function()
+    if Library.Unloaded then return end
+    pcall(UpdateEspState)
+end)
+
+-- Per-player options injection: Sense's EspObject re-reads the shared team table
+-- every Update, but Render() uses self.options. Wrap Update to hand each object
+-- a per-player copy: boxColor = visible/hidden, weapon text = "FF" when forcefielded.
+local function patchSenseObject(espObject)
+    local classUpdate = getrawmetatable(espObject).__index.Update
+    espObject.Update = function(self, ...)
+        classUpdate(self, ...)
+        local state = EspState[self.player]
+        if state and self.options then
+            local base = self.options
+            local copy = {}
+            for k, v in pairs(base) do copy[k] = v end
+            copy.boxColor = {
+                state.visible and Config.ESP.VisibleColor or Config.ESP.HiddenColor,
+                base.boxColor[2],
+            }
+            copy.weapon = Config.ESP.ForceFieldMarker and state.forcefield
+            self.options = copy
+        end
+    end
+end
+
+-- Chams: same vischeck treatment — swap FillColor/OutlineColor per player
+local function patchSenseChams(chamObject)
+    local classUpdate = getrawmetatable(chamObject).__index.Update
+    chamObject.Update = function(self, ...)
+        classUpdate(self, ...)
+        local state = EspState[self.player]
+        if state and self.highlight and self.highlight.Enabled then
+            local c = state.visible and Config.ESP.VisibleColor or Config.ESP.HiddenColor
+            self.highlight.FillColor = c
+            self.highlight.OutlineColor = c
+        end
+    end
+end
+
+-- Weapon text hook: forcefielded players show "FF" under their box
+local realGetWeapon = Sense.getWeapon
+Sense.getWeapon = function(player)
+    if Config.ESP.ForceFieldMarker and HasForceField(player.Character) then
+        return "FF"
+    end
+    return realGetWeapon(player)
+end
+
+-- Patch objects as Sense creates them (after Sense.Load() + on PlayerAdded)
+task.spawn(function()
+    while not Sense._hasLoaded do task.wait(0.1) end
+    task.wait(0.5)
+    while true do
+        if Library.Unloaded then return end
+        pcall(function()
+            for _, objects in pairs(Sense._objectCache) do
+                local espObject = objects[1]
+                if espObject and espObject.__novusPatched ~= true then
+                    patchSenseObject(espObject)
+                    espObject.__novusPatched = true
+                end
+                local chamObject = objects[2]
+                if chamObject and chamObject.__novusChamPatched ~= true then
+                    patchSenseChams(chamObject)
+                    chamObject.__novusChamPatched = true
+                end
+            end
+        end)
+        task.wait(1)
+    end
+end)
 
 local VisualsGui = Instance.new("ScreenGui")
 VisualsGui.Name = "NovusVisuals"
@@ -579,7 +706,7 @@ end
 local function GetClosest(enabled,
     teamCheck, visibilityCheck, distanceCheck,
     distanceLimit, fovRadius, priority, bodyParts,
-    predictionEnabled)
+    predictionEnabled, forceFieldCheck)
 
     if not enabled then return nil end
 
@@ -593,6 +720,7 @@ local function GetClosest(enabled,
         local char = plr.Character
         if not char then continue end
         if not InEnemyTeam(teamCheck, plr) then continue end
+        if forceFieldCheck and HasForceField(char) then continue end  -- invulnerable, skip
 
         local hum = char:FindFirstChildOfClass("Humanoid")
         if not hum or hum.Health <= 0 then continue end
@@ -873,6 +1001,7 @@ local function Box3D_IsEnemy(plr)
 end
 
 RunService.RenderStepped:Connect(function()
+    if Library.Unloaded then return end
     if not Box3DConfig.Enabled then
         if #Box3D_Lines > 0 or #Box3D_Quads > 0 then
             Box3D_Clear()
@@ -934,6 +1063,7 @@ local ChamsConfig = {
 local ChamInstances = {}
 
 local function UpdateChams()
+    if Library.Unloaded then return end
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr == LocalPlayer then continue end
 
@@ -1002,6 +1132,7 @@ local function GetScreenCenter()
 end
 
 RunService.RenderStepped:Connect(function()
+    if Library.Unloaded then return end
     if not ArrowConfig.Enabled then
         for _, tri in pairs(ArrowInstances) do
             tri.Visible = false
@@ -1117,6 +1248,7 @@ local function GetOrCreateNameTag(plr, char)
 end
 
 RunService.RenderStepped:Connect(function()
+    if Library.Unloaded then return end
     for plr, gui in pairs(NameTagInstances) do
         if not Players:FindFirstChild(plr.Name) or not plr.Character or not plr.Character:FindFirstChild("Head") or not NameTagConfig.Enabled then
             gui.Enabled = false
@@ -1608,7 +1740,8 @@ RunService.RenderStepped:Connect(function()
         Config.Silent.FOVRadius,
         Config.Silent.PriorityList[Config.Silent.PriorityIndex],
         AimbotBodyParts,
-        Config.Silent.Prediction
+        Config.Silent.Prediction,
+        Config.Silent.IgnoreForceFielded
     )
 end)
 
@@ -1717,6 +1850,7 @@ end)
 -- Input handled by Linoria keybinds now
 
 RunService.RenderStepped:Connect(function()
+    if Library.Unloaded then return end
     local mousePos = UIS:GetMouseLocation()
     if (Config.Aimbot.Enabled or Window.Enabled) and Config.Aimbot.FOVRadius > 0 and Config.AimVisuals.ShowAimbotFOV then
         AimbotFOVCircle.Position = mousePos
@@ -1765,7 +1899,8 @@ RunService.RenderStepped:Connect(function()
             local plr, char, part = lt[1], lt[2], lt[3]
             local hum = char and char:FindFirstChildOfClass("Humanoid")
             if plr and plr.Parent and char and char.Parent and part and part.Parent and hum and hum.Health > 0 then
-                if not Config.Aimbot.TeamCheck or InEnemyTeam(true, plr) then
+                if not (Config.Aimbot.IgnoreForceFielded and HasForceField(char)) then  -- invulnerable, drop lock
+                    if not Config.Aimbot.TeamCheck or InEnemyTeam(true, plr) then
                     if not Config.Aimbot.DistanceCheck or WithinReach(true, (part.Position - Camera.CFrame.Position).Magnitude, Config.Aimbot.DistanceLimit) then
                         local targetPos = part.Position
                         -- Apply prediction for lock aim
@@ -1787,7 +1922,8 @@ RunService.RenderStepped:Connect(function()
             end
             if not hit then _lockedTarget = nil end
         end
-        
+        end
+
         -- No locked target — find new one
         if not hit then
             hit = GetClosest(true,
@@ -1798,7 +1934,8 @@ RunService.RenderStepped:Connect(function()
                 Config.Aimbot.FOVRadius,
                 Config.Aimbot.PriorityList[Config.Aimbot.PriorityIndex],
                 AimbotBodyParts,
-                Config.Aimbot.Prediction
+                Config.Aimbot.Prediction,
+                Config.Aimbot.IgnoreForceFielded
             )
             if hit and Config.Aimbot.LockAim then
                 _lockedTarget = hit
@@ -1840,7 +1977,8 @@ RunService.RenderStepped:Connect(function()
         Config.Trigger.FOVRadius,
         Config.Trigger.PriorityList[Config.Trigger.PriorityIndex],
         TriggerBodyParts,
-        Config.Trigger.Prediction
+        Config.Trigger.Prediction,
+        Config.Trigger.IgnoreForceFielded
     )
 
     if triggerHit then
@@ -1859,7 +1997,8 @@ RunService.RenderStepped:Connect(function()
                             Config.Trigger.FOVRadius,
                             Config.Trigger.PriorityList[Config.Trigger.PriorityIndex],
                             TriggerBodyParts,
-                            Config.Trigger.Prediction
+                            Config.Trigger.Prediction,
+                            Config.Trigger.IgnoreForceFielded
                         )
                         if not again then break end
                         task.wait(math.max(Config.Trigger.FireRate / 1000, 0.01))
@@ -2303,6 +2442,7 @@ do
     AimDep:AddToggle('AimbotTeamCheck', { Text = 'Team Check', Default = Config.Aimbot.TeamCheck })
     AimDep:AddToggle('AimbotDistCheck', { Text = 'Distance Check', Default = Config.Aimbot.DistanceCheck })
     AimDep:AddToggle('AimbotVisCheck', { Text = 'Visibility Check', Default = Config.Aimbot.VisibilityCheck })
+    AimDep:AddToggle('AimbotIgnoreFF', { Text = 'Ignore ForceFielded', Default = Config.Aimbot.IgnoreForceFielded })
     AimDep:AddToggle('AimbotPred', { Text = 'Prediction', Default = Config.Aimbot.Prediction })
     AimDep:AddInput('AimbotSens', { Default = tostring(Config.Aimbot.Sensitivity), Numeric = true, Finished = true, Text = 'Sensitivity', Placeholder = tostring(Config.Aimbot.Sensitivity) })
     AimDep:AddToggle('AimbotAutoFire', { Text = 'Auto-Fire (100% sens only)', Default = false })
@@ -2322,13 +2462,14 @@ do
         c.DistanceCheck = Toggles.AimbotDistCheck.Value
         c.VisibilityCheck = Toggles.AimbotVisCheck.Value
         c.Prediction = Toggles.AimbotPred.Value
-        c.Sensitivity = tonumber(Options.AimbotSens.Value)
-        c.FOVRadius = tonumber(Options.AimbotFOV.Value)
-        c.DistanceLimit = tonumber(Options.AimbotDist.Value)
+        c.Sensitivity = tonumber(Options.AimbotSens.Value) or c.Sensitivity
+        c.FOVRadius = tonumber(Options.AimbotFOV.Value) or c.FOVRadius
+        c.DistanceLimit = tonumber(Options.AimbotDist.Value) or c.DistanceLimit
         c.PriorityIndex = table.find({'Closest', 'Head', 'HumanoidRootPart', 'Random'}, Options.AimbotPriority.Value) or 1
         c.PriorityList = {'Closest', 'Head', 'HumanoidRootPart', 'Random'}
+        c.IgnoreForceFielded = Toggles.AimbotIgnoreFF.Value
     end
-    for _, ev in ipairs({Toggles.AimbotEnabled, Toggles.AimbotCameraAim, Toggles.AimbotAutoFire, Toggles.AimbotLockAim, Toggles.AimbotTeamCheck, Toggles.AimbotDistCheck, Toggles.AimbotVisCheck, Toggles.AimbotPred}) do ev:OnChanged(wireAim) end
+    for _, ev in ipairs({Toggles.AimbotEnabled, Toggles.AimbotCameraAim, Toggles.AimbotAutoFire, Toggles.AimbotLockAim, Toggles.AimbotTeamCheck, Toggles.AimbotDistCheck, Toggles.AimbotVisCheck, Toggles.AimbotIgnoreFF, Toggles.AimbotPred}) do ev:OnChanged(wireAim) end
     for _, ev in ipairs({Options.AimbotSens, Options.AimbotFOV, Options.AimbotDist, Options.AimbotPriority}) do ev:OnChanged(wireAim) end
 end
 
@@ -2342,6 +2483,7 @@ do
     TrigDep:AddToggle('TriggerHoldClick', { Text = 'Hold Click', Default = Config.Trigger.HoldMouse })
     TrigDep:AddToggle('TriggerDistCheck', { Text = 'Distance Check', Default = Config.Trigger.DistanceCheck })
     TrigDep:AddToggle('TriggerVisCheck', { Text = 'Visibility Check', Default = Config.Trigger.VisibilityCheck })
+    TrigDep:AddToggle('TriggerIgnoreFF', { Text = 'Ignore ForceFielded', Default = Config.Trigger.IgnoreForceFielded })
     TrigDep:AddToggle('TriggerPred', { Text = 'Prediction', Default = Config.Trigger.Prediction })
     TrigDep:AddInput('TriggerDelay', { Default = tostring(Config.Trigger.Delay * 1000), Numeric = true, Finished = true, Text = 'Delay', Placeholder = tostring(Config.Trigger.Delay * 1000) })
     TrigDep:AddInput('TriggerFireRate', { Default = tostring(Config.Trigger.FireRate), Numeric = true, Finished = true, Text = 'Fire Rate (ms)', Placeholder = tostring(Config.Trigger.FireRate) })
@@ -2359,14 +2501,15 @@ do
         c.DistanceCheck = Toggles.TriggerDistCheck.Value
         c.VisibilityCheck = Toggles.TriggerVisCheck.Value
         c.Prediction = Toggles.TriggerPred.Value
-        c.Delay = tonumber(Options.TriggerDelay.Value) / 1000
-        c.FireRate = tonumber(Options.TriggerFireRate.Value)
-        c.FOVRadius = tonumber(Options.TriggerFOV.Value)
-        c.DistanceLimit = tonumber(Options.TriggerDist.Value)
+        c.Delay = (tonumber(Options.TriggerDelay.Value) or c.Delay * 1000) / 1000
+        c.FireRate = tonumber(Options.TriggerFireRate.Value) or c.FireRate
+        c.FOVRadius = tonumber(Options.TriggerFOV.Value) or c.FOVRadius
+        c.DistanceLimit = tonumber(Options.TriggerDist.Value) or c.DistanceLimit
         c.PriorityIndex = table.find({'Closest', 'Head', 'HumanoidRootPart', 'Random'}, Options.TriggerPriority.Value) or 1
         c.PriorityList = {'Closest', 'Head', 'HumanoidRootPart', 'Random'}
+        c.IgnoreForceFielded = Toggles.TriggerIgnoreFF.Value
     end
-    for _, ev in ipairs({Toggles.TriggerEnabled, Toggles.TriggerHoldClick, Toggles.TriggerTeamCheck, Toggles.TriggerDistCheck, Toggles.TriggerVisCheck, Toggles.TriggerPred}) do ev:OnChanged(wireTrig) end
+    for _, ev in ipairs({Toggles.TriggerEnabled, Toggles.TriggerHoldClick, Toggles.TriggerTeamCheck, Toggles.TriggerDistCheck, Toggles.TriggerVisCheck, Toggles.TriggerIgnoreFF, Toggles.TriggerPred}) do ev:OnChanged(wireTrig) end
     for _, ev in ipairs({Options.TriggerDelay, Options.TriggerFireRate, Options.TriggerFOV, Options.TriggerDist, Options.TriggerPriority}) do ev:OnChanged(wireTrig) end
 end
 
@@ -2376,8 +2519,8 @@ do
     Pred:AddInput('PredSpeed', { Default = tostring(Config.Prediction.ProjectileSpeed), Numeric = true, Finished = true, Text = 'Projectile Speed', Placeholder = tostring(Config.Prediction.ProjectileSpeed) })
     Pred:AddInput('PredGrav', { Default = tostring(Config.Prediction.Gravity), Numeric = true, Finished = true, Text = 'Gravity', Placeholder = tostring(Config.Prediction.Gravity) })
 
-    Options.PredSpeed:OnChanged(function() Config.Prediction.ProjectileSpeed = tonumber(Options.PredSpeed.Value) end)
-    Options.PredGrav:OnChanged(function() Config.Prediction.Gravity = tonumber(Options.PredGrav.Value) / 100 end)
+    Options.PredSpeed:OnChanged(function() Config.Prediction.ProjectileSpeed = tonumber(Options.PredSpeed.Value) or Config.Prediction.ProjectileSpeed end)
+    Options.PredGrav:OnChanged(function() Config.Prediction.Gravity = tonumber(Options.PredGrav.Value) and tonumber(Options.PredGrav.Value) / 100 or Config.Prediction.Gravity end)
 end
 
 -- Silent Aim
@@ -2389,6 +2532,7 @@ do
     SilentDep:AddToggle('SilentTeamCheck', { Text = 'Team Check', Default = Config.Silent.TeamCheck })
     SilentDep:AddToggle('SilentDistCheck', { Text = 'Distance Check', Default = Config.Silent.DistanceCheck })
     SilentDep:AddToggle('SilentVisCheck', { Text = 'Visibility Check', Default = Config.Silent.VisibilityCheck })
+    SilentDep:AddToggle('SilentIgnoreFF', { Text = 'Ignore ForceFielded', Default = Config.Silent.IgnoreForceFielded })
     SilentDep:AddToggle('SilentPred', { Text = 'Prediction', Default = Config.Silent.Prediction })
     SilentDep:AddToggle('SilentSpoofOrigin', { Text = 'Wallbang (Magic Bullet)', Default = Config.Silent.SpoofOrigin })
     SilentDep:AddDropdown('SilentPriority', { Text = 'Aimpoint', Default = 'Closest', Values = {'Closest', 'Head', 'HumanoidRootPart', 'Random'} })
@@ -2402,15 +2546,16 @@ do
         c.TeamCheck = Toggles.SilentTeamCheck.Value
         c.DistanceCheck = Toggles.SilentDistCheck.Value
         c.VisibilityCheck = Toggles.SilentVisCheck.Value
+        c.IgnoreForceFielded = Toggles.SilentIgnoreFF.Value
         c.Prediction = Toggles.SilentPred.Value
         c.SpoofOrigin = Toggles.SilentSpoofOrigin.Value
         c.PriorityIndex = table.find({'Closest', 'Head', 'HumanoidRootPart', 'Random'}, Options.SilentPriority.Value) or 1
         c.PriorityList = {'Closest', 'Head', 'HumanoidRootPart', 'Random'}
-        c.HitChance = tonumber(Options.SilentHitChance.Value)
-        c.FOVRadius = tonumber(Options.SilentFOV.Value)
-        c.DistanceLimit = tonumber(Options.SilentDist.Value)
+        c.HitChance = tonumber(Options.SilentHitChance.Value) or c.HitChance
+        c.FOVRadius = tonumber(Options.SilentFOV.Value) or c.FOVRadius
+        c.DistanceLimit = tonumber(Options.SilentDist.Value) or c.DistanceLimit
     end
-    for _, ev in ipairs({Toggles.SilentEnabled, Toggles.SilentTeamCheck, Toggles.SilentDistCheck, Toggles.SilentVisCheck, Toggles.SilentPred, Toggles.SilentSpoofOrigin, Options.SilentPriority, Options.SilentHitChance, Options.SilentFOV, Options.SilentDist}) do
+    for _, ev in ipairs({Toggles.SilentEnabled, Toggles.SilentTeamCheck, Toggles.SilentDistCheck, Toggles.SilentVisCheck, Toggles.SilentIgnoreFF, Toggles.SilentPred, Toggles.SilentSpoofOrigin, Options.SilentPriority, Options.SilentHitChance, Options.SilentFOV, Options.SilentDist}) do
         ev:OnChanged(wireSilent)
     end
 end
@@ -2427,11 +2572,11 @@ do
     Toggles.ClickTP:AddKeyPicker('ClickTPKey', { Default = 'None', Mode = 'Hold', SyncToggleState = false, Text = 'ClickTP' })
 
     Options.WalkSpeed:OnChanged(function()
-        Config.Movement.WalkSpeed = tonumber(Options.WalkSpeed.Value)
+        Config.Movement.WalkSpeed = tonumber(Options.WalkSpeed.Value) or Config.Movement.WalkSpeed
         applyWalkSpeed()
     end)
     Options.JumpPower:OnChanged(function()
-        Config.Movement.JumpPower = tonumber(Options.JumpPower.Value)
+        Config.Movement.JumpPower = tonumber(Options.JumpPower.Value) or Config.Movement.JumpPower
         applyJumpPower()
     end)
     Toggles.ClickTP:OnChanged(function() Config.Movement.ClickTP = Toggles.ClickTP.Value end)
@@ -2452,7 +2597,9 @@ do
     EspEnDep:AddToggle('ESPEnemyDist', { Text = 'Distance', Default = Sense.teamSettings.enemy.distance })
     EspEnDep:AddToggle('ESPEnemyTracer', { Text = 'Tracer', Default = Sense.teamSettings.enemy.tracer })
     EspEnDep:AddToggle('ESPEnemyChams', { Text = 'Chams', Default = Sense.teamSettings.enemy.chams })
-    EspEnDep:AddLabel('Box Color'):AddColorPicker('ESPEnemyColor', { Default = Sense.teamSettings.enemy.boxColor[1] })
+    EspEnDep:AddToggle('ESPEnemyFFMarker', { Text = 'FF Marker', Default = Config.ESP.ForceFieldMarker })
+    EspEnDep:AddLabel('Visible Color'):AddColorPicker('ESPEnemyVisibleColor', { Default = Config.ESP.VisibleColor })
+    EspEnDep:AddLabel('Hidden Color'):AddColorPicker('ESPEnemyHiddenColor', { Default = Config.ESP.HiddenColor })
     EspEnDep:SetupDependencies({{ Toggles.ESPEnemyEnabled, true }})
 
     local function wireEnemyESP()
@@ -2464,10 +2611,13 @@ do
         s.distance = Toggles.ESPEnemyDist.Value
         s.tracer = Toggles.ESPEnemyTracer.Value
         s.chams = Toggles.ESPEnemyChams.Value
-        s.boxColor[1] = Options.ESPEnemyColor.Value
+        Config.ESP.ForceFieldMarker = Toggles.ESPEnemyFFMarker.Value
+        Config.ESP.VisibleColor = Options.ESPEnemyVisibleColor.Value
+        Config.ESP.HiddenColor = Options.ESPEnemyHiddenColor.Value
     end
-    for _, ev in ipairs({Toggles.ESPEnemyEnabled, Toggles.ESPEnemyBox, Toggles.ESPEnemyHealth, Toggles.ESPEnemyName, Toggles.ESPEnemyDist, Toggles.ESPEnemyTracer, Toggles.ESPEnemyChams}) do ev:OnChanged(wireEnemyESP) end
-    Options.ESPEnemyColor:OnChanged(wireEnemyESP)
+    for _, ev in ipairs({Toggles.ESPEnemyEnabled, Toggles.ESPEnemyBox, Toggles.ESPEnemyHealth, Toggles.ESPEnemyName, Toggles.ESPEnemyDist, Toggles.ESPEnemyTracer, Toggles.ESPEnemyChams, Toggles.ESPEnemyFFMarker}) do ev:OnChanged(wireEnemyESP) end
+    Options.ESPEnemyVisibleColor:OnChanged(wireEnemyESP)
+    Options.ESPEnemyHiddenColor:OnChanged(wireEnemyESP)
 end
 
 -- ESP (Friendly)
@@ -2517,8 +2667,8 @@ do
         Config.AimVisuals.ShowSilentFOV = Toggles.FOVSilent.Value
         Config.AimVisuals.ShowTriggerFOV = Toggles.FOVTrigger.Value
         Config.AimVisuals.Filled = Toggles.FOVFilled.Value
-        Config.AimVisuals.Thickness = tonumber(Options.FOVThickness.Value)
-        Config.AimVisuals.Sides = tonumber(Options.FOVSides.Value)
+        Config.AimVisuals.Thickness = tonumber(Options.FOVThickness.Value) or Config.AimVisuals.Thickness
+        Config.AimVisuals.Sides = tonumber(Options.FOVSides.Value) or Config.AimVisuals.Sides
         local ac = Options.FOVAimbotColor.Value; Config.AimVisuals.AimbotColor = {R = ac.R*255, G = ac.G*255, B = ac.B*255}
         local sc = Options.FOVSilentColor.Value; Config.AimVisuals.SilentColor = {R = sc.R*255, G = sc.G*255, B = sc.B*255}
         local tc = Options.FOVTriggerColor.Value; Config.AimVisuals.TriggerColor = {R = tc.R*255, G = tc.G*255, B = tc.B*255}
