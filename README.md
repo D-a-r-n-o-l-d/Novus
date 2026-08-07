@@ -1,6 +1,6 @@
 # Novus
 
-Roblox script with Adonis anticheat bypass.
+Roblox script with Adonis anticheat bypass. (AI coded, Don't @ me)
 
 ## Variants
 
@@ -32,5 +32,7 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/D-a-r-n-o-l-d/Novus/m
 
 Credits to,
   Sense
+  
   Linora
+  
   Parvus Hub (The OG)
