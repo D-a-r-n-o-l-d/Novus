@@ -314,6 +314,14 @@ local LocalPlayer = Players.LocalPlayer
 local Camera      = Workspace.CurrentCamera
 local Mouse       = LocalPlayer:GetMouse()
 
+-- RAW engine refs captured BEFORE any hooking: silent-aim __namecall hooks
+-- spoof Workspace:Raycast / Camera:WorldToViewportPoint for the GAME, but our
+-- own vischeck + target selection must not be redirected (that made vischeck
+-- "inverted": candidates were evaluated at the current target's position).
+-- Calling these directly (not via `:` namecall) bypasses hookmetamethod.
+local RawRaycast      = Workspace.Raycast
+local RawViewportPoint = Camera.WorldToViewportPoint
+
 ---------------------------------------------------------------------
 
 -- Linoria UI — Novus Combat Hub
@@ -676,7 +684,7 @@ WallCheckParams.IgnoreWater = true
 
 local function Raycast(origin, direction, ignoreList)
     WallCheckParams.FilterDescendantsInstances = ignoreList
-    return Workspace:Raycast(origin, direction, WallCheckParams)
+    return RawRaycast(Workspace, origin, direction, WallCheckParams)
 end
 
 local function InEnemyTeam(enabled, plr)
@@ -706,7 +714,7 @@ end
 local function GetClosest(enabled,
     teamCheck, visibilityCheck, distanceCheck,
     distanceLimit, fovRadius, priority, bodyParts,
-    predictionEnabled, forceFieldCheck)
+    predictionEnabled, forceFieldCheck, rawSelection)
 
     if not enabled then return nil end
 
@@ -731,20 +739,24 @@ local function GetClosest(enabled,
             local distance = (pos - cameraPos).Magnitude
             if not WithinReach(distanceCheck, distance, distanceLimit) then return end
 
+            -- Predict for the AIM point, but select the target by its raw
+            -- screen position (closest to crosshair = what you're actually on)
+            local aimPos = pos
             if predictionEnabled and Config.Prediction.ProjectileSpeed > 0 then
                 local travelTime = distance / Config.Prediction.ProjectileSpeed
-                pos = SolveTrajectory(pos, part.AssemblyLinearVelocity, travelTime, Config.Prediction.Gravity, Config.Prediction.GravityCorrection)
+                aimPos = SolveTrajectory(pos, part.AssemblyLinearVelocity, travelTime, Config.Prediction.Gravity, Config.Prediction.GravityCorrection)
             end
 
-            local screenPos, onScreen = Camera:WorldToViewportPoint(pos)
+            local selectPos = rawSelection and pos or aimPos
+            local screenPos, onScreen = RawViewportPoint(Camera, selectPos)
             if not onScreen then return end
-            if ObjectOccluded(visibilityCheck, cameraPos, pos, char) then return end
+            if ObjectOccluded(visibilityCheck, cameraPos, selectPos, char) then return end
 
             local screen2d = Vector2.new(screenPos.X, screenPos.Y)
             local mag = (screen2d - mousePos).Magnitude
             if mag < closestMag then
                 closestMag = mag
-                closestHit = {plr, char, part, screen2d}
+                closestHit = {plr, char, part, screen2d, aimPos}  -- [4] select pos, [5] predicted aim pos
             end
         end
 
@@ -863,7 +875,7 @@ local function EnsureSkeletonLoop()
             local function getPos(partName)
                 local part = char:FindFirstChild(partName)
                 if not part then return nil end
-                local p, onScreen = Camera:WorldToViewportPoint(part.Position)
+                local p, onScreen = RawViewportPoint(Camera, part.Position)
                 if not onScreen then return nil end
                 return Vector2.new(p.X, p.Y)
             end
@@ -961,10 +973,10 @@ local function Box3D_GetCorners(obj)
 end
 
 local function Box3D_DrawQuad(a, b, c, d)
-    local sa, va = Camera:WorldToViewportPoint(a)
-    local sb, vb = Camera:WorldToViewportPoint(b)
-    local sc, vc = Camera:WorldToViewportPoint(c)
-    local sd, vd = Camera:WorldToViewportPoint(d)
+    local sa, va = RawViewportPoint(Camera, a)
+    local sb, vb = RawViewportPoint(Camera, b)
+    local sc, vc = RawViewportPoint(Camera, c)
+    local sd, vd = RawViewportPoint(Camera, d)
     if not (va or vb or vc or vd) then return end
 
     local qa = Box3D_NewQuad()
@@ -979,8 +991,8 @@ local function Box3D_DrawQuad(a, b, c, d)
 end
 
 local function Box3D_DrawLine(p0, p1)
-    local s0, v0 = Camera:WorldToViewportPoint(p0)
-    local s1, v1 = Camera:WorldToViewportPoint(p1)
+    local s0, v0 = RawViewportPoint(Camera, p0)
+    local s1, v1 = RawViewportPoint(Camera, p1)
     if not (v0 or v1) then return end
 
     local l = Box3D_NewLine()
@@ -1167,7 +1179,7 @@ RunService.RenderStepped:Connect(function()
             continue
         end
 
-        local pos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+        local pos, onScreen = RawViewportPoint(Camera, hrp.Position)
         local screenPos = Vector2.new(pos.X, pos.Y)
 
         local tri = ArrowInstances[plr]
@@ -1561,7 +1573,7 @@ local function AimViewer_IsBeamHit(beam, mousePos)
     local raycastParams = RaycastParams.new()
     raycastParams.FilterDescendantsInstances = { character, Workspace.CurrentCamera }
 
-    local result = Workspace:Raycast(origin, direction * 2, raycastParams)
+    local result = RawRaycast(Workspace, origin, direction * 2, raycastParams)
     if not result then
         beam.Color = AimViewerColours.Away
         beam.Attachment1.WorldPosition = mousePos
@@ -1741,9 +1753,15 @@ RunService.RenderStepped:Connect(function()
         Config.Silent.PriorityList[Config.Silent.PriorityIndex],
         AimbotBodyParts,
         Config.Silent.Prediction,
-        Config.Silent.IgnoreForceFielded
+        Config.Silent.IgnoreForceFielded,
+        true  -- select by RAW screen pos (closest to crosshair), aim at predicted [5]
     )
 end)
+
+local function SilentAimPos()
+    -- Predicted world position when prediction is on, raw part pos otherwise
+    return SilentTarget[5] or SilentTarget[3].Position
+end
 
 local OldIndex
 OldIndex = hookmetamethod(game, "__index", function(self, index)
@@ -1751,7 +1769,7 @@ OldIndex = hookmetamethod(game, "__index", function(self, index)
     if Config.Silent.Enabled and SilentTarget and math.random(100) <= Config.Silent.HitChance then
         if self == Mouse then
             if index == "Target" then return SilentTarget[3]
-            elseif index == "Hit" then return SilentTarget[3].CFrame end
+            elseif index == "Hit" then return CFrame.new(SilentAimPos()) end
         end
     end
     return OldIndex(self, index)
@@ -1778,11 +1796,11 @@ OldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
                 if typeof(origin) == "Vector3" then
                     if Config.Silent.SpoofOrigin then
                         -- Magic bullet: random origin 0.1–1 stud around aimpoint, aimed back at it
-                        local o, d = MagicOrigin(SilentTarget[3].Position)
+                        local o, d = MagicOrigin(SilentAimPos())
                         args[1] = o
                         args[2] = d
                     else
-                        args[2] = SilentTarget[3].Position - origin
+                        args[2] = SilentAimPos() - origin
                     end
                     return OldNamecall(self, unpack(args))
                 end
@@ -1791,10 +1809,10 @@ OldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
             or method == "FindPartOnRayWithWhitelist" then
                 if typeof(args[1]) == "Ray" then
                     if Config.Silent.SpoofOrigin then
-                        local o, d = MagicOrigin(SilentTarget[3].Position)
+                        local o, d = MagicOrigin(SilentAimPos())
                         args[1] = Ray.new(o, d)
                     else
-                        args[1] = Ray.new(args[1].Origin, SilentTarget[3].Position - args[1].Origin)
+                        args[1] = Ray.new(args[1].Origin, SilentAimPos() - args[1].Origin)
                     end
                     return OldNamecall(self, unpack(args))
                 end
@@ -1802,11 +1820,11 @@ OldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
         elseif self == Camera then
             if method == "ScreenPointToRay" or method == "ViewportPointToRay" then
                 if Config.Silent.SpoofOrigin then
-                    local o, d = MagicOrigin(SilentTarget[3].Position)
+                    local o, d = MagicOrigin(SilentAimPos())
                     return Ray.new(o, d)
                 end
             elseif method == "WorldToScreenPoint" or method == "WorldToViewportPoint" then
-                args[1] = SilentTarget[3].Position
+                args[1] = SilentAimPos()
                 return OldNamecall(self, unpack(args))
             end
         end
@@ -1909,7 +1927,7 @@ RunService.RenderStepped:Connect(function()
                             local travelTime = dist / Config.Prediction.ProjectileSpeed
                             targetPos = SolveTrajectory(targetPos, part.AssemblyLinearVelocity, travelTime, Config.Prediction.Gravity, Config.Prediction.GravityCorrection)
                         end
-                        local screenPos, onScreen = Camera:WorldToViewportPoint(targetPos)
+                        local screenPos, onScreen = RawViewportPoint(Camera, targetPos)
                         if onScreen then
                             local mousePos = UIS:GetMouseLocation()
                             local mag = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
@@ -2443,7 +2461,7 @@ do
     AimDep:AddToggle('AimbotDistCheck', { Text = 'Distance Check', Default = Config.Aimbot.DistanceCheck })
     AimDep:AddToggle('AimbotVisCheck', { Text = 'Visibility Check', Default = Config.Aimbot.VisibilityCheck })
     AimDep:AddToggle('AimbotIgnoreFF', { Text = 'Ignore ForceFielded', Default = Config.Aimbot.IgnoreForceFielded })
-    AimDep:AddToggle('AimbotPred', { Text = 'Prediction', Default = Config.Aimbot.Prediction })
+    AimDep:AddToggle('AimbotPred', { Text = 'Projectile Prediction', Default = Config.Aimbot.Prediction })
     AimDep:AddInput('AimbotSens', { Default = tostring(Config.Aimbot.Sensitivity), Numeric = true, Finished = true, Text = 'Sensitivity', Placeholder = tostring(Config.Aimbot.Sensitivity) })
     AimDep:AddToggle('AimbotAutoFire', { Text = 'Auto-Fire (100% sens only)', Default = false })
     AimDep:AddInput('AimbotFOV', { Default = tostring(Config.Aimbot.FOVRadius), Numeric = true, Finished = true, Text = 'FOV Radius', Placeholder = tostring(Config.Aimbot.FOVRadius) })
@@ -2484,7 +2502,7 @@ do
     TrigDep:AddToggle('TriggerDistCheck', { Text = 'Distance Check', Default = Config.Trigger.DistanceCheck })
     TrigDep:AddToggle('TriggerVisCheck', { Text = 'Visibility Check', Default = Config.Trigger.VisibilityCheck })
     TrigDep:AddToggle('TriggerIgnoreFF', { Text = 'Ignore ForceFielded', Default = Config.Trigger.IgnoreForceFielded })
-    TrigDep:AddToggle('TriggerPred', { Text = 'Prediction', Default = Config.Trigger.Prediction })
+    TrigDep:AddToggle('TriggerPred', { Text = 'Projectile Prediction', Default = Config.Trigger.Prediction })
     TrigDep:AddInput('TriggerDelay', { Default = tostring(Config.Trigger.Delay * 1000), Numeric = true, Finished = true, Text = 'Delay', Placeholder = tostring(Config.Trigger.Delay * 1000) })
     TrigDep:AddInput('TriggerFireRate', { Default = tostring(Config.Trigger.FireRate), Numeric = true, Finished = true, Text = 'Fire Rate (ms)', Placeholder = tostring(Config.Trigger.FireRate) })
     TrigDep:AddInput('TriggerFOV', { Default = tostring(Config.Trigger.FOVRadius), Numeric = true, Finished = true, Text = 'FOV Radius', Placeholder = tostring(Config.Trigger.FOVRadius) })
@@ -2515,7 +2533,7 @@ end
 
 -- Prediction settings
 do
-    local Pred = Tabs.Combat:AddRightGroupbox('Prediction')
+    local Pred = Tabs.Combat:AddRightGroupbox('Projectile Prediction')
     Pred:AddInput('PredSpeed', { Default = tostring(Config.Prediction.ProjectileSpeed), Numeric = true, Finished = true, Text = 'Projectile Speed', Placeholder = tostring(Config.Prediction.ProjectileSpeed) })
     Pred:AddInput('PredGrav', { Default = tostring(Config.Prediction.Gravity), Numeric = true, Finished = true, Text = 'Gravity', Placeholder = tostring(Config.Prediction.Gravity) })
 
@@ -2533,7 +2551,7 @@ do
     SilentDep:AddToggle('SilentDistCheck', { Text = 'Distance Check', Default = Config.Silent.DistanceCheck })
     SilentDep:AddToggle('SilentVisCheck', { Text = 'Visibility Check', Default = Config.Silent.VisibilityCheck })
     SilentDep:AddToggle('SilentIgnoreFF', { Text = 'Ignore ForceFielded', Default = Config.Silent.IgnoreForceFielded })
-    SilentDep:AddToggle('SilentPred', { Text = 'Prediction', Default = Config.Silent.Prediction })
+    SilentDep:AddToggle('SilentPred', { Text = 'Projectile Prediction', Default = Config.Silent.Prediction })
     SilentDep:AddToggle('SilentSpoofOrigin', { Text = 'Wallbang (Magic Bullet)', Default = Config.Silent.SpoofOrigin })
     SilentDep:AddDropdown('SilentPriority', { Text = 'Aimpoint', Default = 'Closest', Values = {'Closest', 'Head', 'HumanoidRootPart', 'Random'} })
     SilentDep:AddInput('SilentHitChance', { Default = tostring(Config.Silent.HitChance), Numeric = true, Finished = true, Text = 'Hit Chance %', Placeholder = tostring(Config.Silent.HitChance) })
