@@ -1,344 +1,359 @@
--- Novus Combat Hub
--- Adonis bypass: load the Novus anti-detection module
--- Novus Anti-Detection Module (inlined)
-(function() -- scoped to prevent local conflicts
--- Novus Anti-Detection Module
--- Author: Magnus (for Dan)
--- Target: Adonis anticheat, Potassium executor
--- Strategy: Neutering the Detected closure via upvalue manipulation
---           No hooks, no metatable changes, no debug.info breakage
-
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-
---------------------------------------------------------------------------------
--- SECTION 1: Potassium API Detection & Capability Check
---------------------------------------------------------------------------------
-
-local CAPS = {
-    hasMemoryAPI = pcall(function() return getthreadidentity end) and getthreadidentity ~= nil,
-    hasHiddenProps = pcall(function() return sethiddenproperty end),
-    hasGC = pcall(function() return getgc end),
-    hasFilterGC = pcall(function() return filtergc end),
-}
-
--- Try to elevate identity if needed
-local currentIdentity = pcall(getthreadidentity) and getthreadidentity() or 2
-if CAPS.hasMemoryAPI and currentIdentity < 7 then
-    pcall(setthreadidentity, 7)
-end
-
---------------------------------------------------------------------------------
--- SECTION 2: WalkSpeed / JumpPower — Memory-Level Property Write
---------------------------------------------------------------------------------
-
-local function setWalkSpeedSafe(value)
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    if CAPS.hasHiddenProps then
-        pcall(sethiddenproperty, hum, "WalkSpeed", value)
-    else
-        hum.WalkSpeed = value
-    end
-end
-
-local function setJumpPowerSafe(value)
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    if CAPS.hasHiddenProps then
-        pcall(sethiddenproperty, hum, "JumpPower", value)
-    else
-        hum.JumpPower = value
-    end
-end
-
---------------------------------------------------------------------------------
--- SECTION 3: Detected Function Neutering via Upvalue Manipulation
+-- Novus :: Adonis bypass v2.1 ---------------------------------------------------------
+-- v2 failed to install in the field. Two Potassium-specific facts, both measured live:
+--   * getupvalues() returns a SPARSE array - Adonis's Detected closure has 14 upvalues
+--     with index 6 empty, so ipairs() stopped at 5 and the network handle was never
+--     reached. (probe: "Detected upvalues=14 handles=0 -> 1:function 2:table ...")
+--   * appendfile() errors with "file does not exist" - the v2 logger wrote nothing at all,
+--     which is why no log existed after a full session.
+--   * typeof() reports "Instance"/"userdata" for instances here, not the class name, so
+--     handle detection must go through .ClassName.
+-- Also measured: on the current client Adonis's `NetworkClient` local is nil, i.e. its
+-- Detected() already cannot report anything. That state is "inert" and counts as safe.
 --
--- CRITICAL INSIGHT: Adonis's Detected function checks:
---   if NetworkClient and action ~= "_" then ... end
--- NetworkClient is an upvalue. If we set it to nil, the function
--- silently exits without sending anything to the server.
---
--- Benefits:
---  - No hookfunc = no FireServer hook detection
---  - No metatable changes = no metatable proxy detection
---  - debug.info sees the ORIGINAL closure = integrity check passes
---  - The function still "works" for integrity checks (Detected("_", "_", true))
---------------------------------------------------------------------------------
+-- Rules unchanged: no hooks, no metatable writes, never call the closure, no LogService.
+---------------------------------------------------------------------------------------
 
-local DetectedNeutered = false
+(function()
+	local Players = game:GetService("Players")
+	local LocalPlayer = Players.LocalPlayer
 
-local function FindAndNeuterDetected()
-    if DetectedNeutered then return true end
-    
-    local function safeGetGC()
-        local ok, result = pcall(function()
-            return getgc(true)
-        end)
-        return ok and result or {}
-    end
-    
-    local objects = safeGetGC()
-    local totalFuncs = 0
-    local constMatched = 0
-    local upvalAttempted = 0
-    
-    if #objects == 0 then
-        print("[Novus] GC scan: 0 objects returned (Adonis may not be loaded)")
-        return false
-    end
-    
-    for _, v in ipairs(objects) do
-        if typeof(v) ~= "function" then continue end
-        totalFuncs = totalFuncs + 1
-        
-        -- Check for Detected function via its unique constants.
-        -- KEY INSIGHT: Adonis breaks strings into individual letters:
-        --   "Detected" = "D".."e".."t".."e".."c".."t".."e".."d"
-        --   "kick"     = "k".."i".."c".."k"  
-        --   "crash"    = "c".."r".."a".."s".."h"
-        -- The ONLY full-string constants are the platform suffixes:
-        --   " - On Xbox" and " - On mobile"
-        -- We need BOTH to be present for a positive match.
-        local ok, constants = pcall(getconstants, v)
-        if not ok or not constants then continue end
-        
-        local hasXbox = false
-        local hasMobile = false
-        local hasUnderscore = false  -- "_" used for integrity check call
-        
-        for _, c in ipairs(constants) do
-            if type(c) == "string" then
-                if c == " - On Xbox" then hasXbox = true end
-                if c == " - On mobile" then hasMobile = true end
-                if c == "_" then hasUnderscore = true end
-            end
-        end
-        
-        -- Must have BOTH platform strings — that's the unique fingerprint
-        if not (hasXbox and hasMobile) then continue end
-        constMatched = constMatched + 1
-        
-        print(string.format("[Novus] *** DETECTED FUNCTION FOUND! (underscore=%s) ***", tostring(hasUnderscore)))
-        
-        -- Found a candidate! Now get its upvalues and nuke NetworkClient
-        local ok2, upvalues = pcall(getupvalues, v)
-        if not ok2 then
-            print(string.format("[Novus] getupvalues FAILED: %s", tostring(upvalues)))
-            continue 
-        end
-        if not upvalues or #upvalues == 0 then
-            print("[Novus] getupvalues returned empty table")
-            continue
-        end
-        
-        upvalAttempted = upvalAttempted + 1
-        print(string.format("[Novus] Got %d upvalues:", #upvalues))
-        for idx, uv in ipairs(upvalues) do
-            print(string.format("[Novus]   [%d] = %s (%s)", idx, tostring(uv), typeof(uv)))
-        end
-        
-        -- Nuke all non-function, non-table upvalues (these are instances like
-        -- NetworkClient, Player, etc. that we want nil'd out)
-        -- typeof() returns class names like "NetworkClient", "Player" — not "Instance"
-        local nuked = 0
-        for idx, uv in ipairs(upvalues) do
-            local t = typeof(uv)
-            -- Skip functions (Send, Kill, etc.) and tables (configs)
-            if t ~= "function" and t ~= "table" then
-                local ok3 = pcall(setupvalue, v, idx, nil)
-                if ok3 then
-                    nuked = nuked + 1
-                    print(string.format("[Novus] Nuked upvalue[%d] (was %s :: %s)", idx, tostring(uv), t))
-                else
-                    print(string.format("[Novus] FAILED to nuke upvalue[%d] (%s)", idx, t))
-                end
-            end
-        end
-        
-        -- Verify: call Detected("_", "_", true) — should still return true
-        local ok3, checkResult = pcall(v, "_", "_", true)
-        if ok3 and checkResult == true then
-            DetectedNeutered = true
-            print(string.format("[Novus] Verified: Detected neutralized (%d upvalues nuked)", nuked))
-            return true
-        else
-            print(string.format("[Novus] Verification failed: ok=%s, result=%s", tostring(ok3), tostring(checkResult)))
-        end
-    end
-    
-    print(string.format("[Novus] Scan complete: %d functions, %d candidates, %d upval attempts — Adonis AC likely not loaded", 
-        totalFuncs, constMatched, upvalAttempted))
-    
-    return false
-end
+	local LOG_PATH    = "scripts/novus_ac.log"
+	local RETRY_DELAY = 2
+	local MAX_PASSES  = 450
 
---------------------------------------------------------------------------------
--- SECTION 4: LogService Output Sanitization
---------------------------------------------------------------------------------
+	local installed = false
+	local mode = "pending"
+	local buffer = {}
 
--- Redirect our print output to avoid appearing in Adonis's log scanner
--- Potassium's rconsole functions bypass LogService entirely
-local function safePrint(...)
-    local args = {...}
-    local msg = table.concat(args, "\t")
-    -- Use rconsole if available (doesn't go through LogService)
-    if rconsoleprint then
-        pcall(rconsoleprint, msg .. "\n")
-    end
-end
+	------------------------------------------------------------------------------
+	-- output: console + file, never LogService (writefile only: appendfile needs
+	-- the file to already exist on this executor)
+	------------------------------------------------------------------------------
+	local function note(msg)
+		local line = tostring(msg)
+		buffer[#buffer + 1] = line
+		while #buffer > 300 do
+			table.remove(buffer, 1)
+		end
+		if type(rconsoleprint) == "function" then
+			pcall(rconsoleprint, line .. "\n")
+		end
+		if type(writefile) == "function" then
+			pcall(writefile, LOG_PATH, table.concat(buffer, "\n"))
+		end
+	end
 
---------------------------------------------------------------------------------
--- SECTION 5: Comprehensive Bypass Installer
---------------------------------------------------------------------------------
+	------------------------------------------------------------------------------
+	-- probes
+	------------------------------------------------------------------------------
+	local function gcList()
+		if type(getgc) ~= "function" then
+			return {}
+		end
+		local ok, list = pcall(getgc, true)
+		if ok and type(list) == "table" then
+			return list
+		end
+		ok, list = pcall(getgc, false)
+		if ok and type(list) == "table" then
+			return list
+		end
+		return {}
+	end
 
-local BypassInstalled = false
+	local function upvaluesOf(fn)
+		if type(getupvalues) ~= "function" then
+			return nil
+		end
+		local ok, list = pcall(getupvalues, fn)
+		if ok and type(list) == "table" and #list > 0 then
+			return list
+		end
+		return nil
+	end
 
-local function InstallBypass()
-    if BypassInstalled then return true end
-    
-    -- Phase 1: Neuter Detected function
-    local success = FindAndNeuterDetected()
-    
-    if success then
-        BypassInstalled = true
-    end
-    
-    return success
-end
+	local function constantsOf(fn)
+		if type(getconstants) ~= "function" then
+			return nil
+		end
+		local ok, list = pcall(getconstants, fn)
+		if ok and type(list) == "table" then
+			return list
+		end
+		return nil
+	end
 
---------------------------------------------------------------------------------
--- SECTION 6: Recurring Scan (catches late-loading Adonis)
---------------------------------------------------------------------------------
+	local function classNameOf(v)
+		local ok, class = pcall(function()
+			return v.ClassName
+		end)
+		if ok and type(class) == "string" then
+			return class
+		end
+		local ok2, t = pcall(typeof, v)
+		if ok2 and type(t) == "string" and t ~= "Instance" and t ~= "userdata" then
+			return t
+		end
+		return nil
+	end
 
-local scanLog = {}
+	-- the network client handle is the only upvalue we care about
+	local function isHandle(v)
+		if v == nil then
+			return false
+		end
+		return classNameOf(v) == "NetworkClient"
+	end
 
-local function scanPrint(msg)
-    table.insert(scanLog, msg)
-    if #scanLog > 100 then table.remove(scanLog, 1) end
-    print(msg)
-    -- Flush to file so Magnus can read from the Pi
-    pcall(function()
-        writefile("scripts/novus_scan.txt", table.concat(scanLog, "\n"))
-    end)
-end
+	------------------------------------------------------------------------------
+	-- scoring for the closure fallback (index-based, hole safe)
+	------------------------------------------------------------------------------
+	local function scanUpvalues(uvs)
+		local handles, score = 0, 0
+		for i = 1, #uvs do
+			local uv = uvs[i]
+			if uv ~= nil then
+				local t = type(uv)
+				if t == "function" then
+					score += 1
+				elseif isHandle(uv) then
+					handles += 1
+					score += 6
+				else
+					local class = classNameOf(uv)
+					if class == "Player" then
+						score += 3
+					elseif class == "Workspace" or class == "DataModel" then
+						score += 2
+					end
+				end
+			end
+		end
+		return score, handles
+	end
 
-task.spawn(function()
-    while true do
-        task.wait(8)
-        if not DetectedNeutered then
-            scanPrint(string.format("[%s] Scanning...", os.date("%H:%M:%S")))
-            
-            -- Temporarily redirect prints inside FindAndNeuterDetected to our logger
-            local oldPrint = print
-            print = scanPrint
-            pcall(FindAndNeuterDetected)
-            print = oldPrint
-        end
-    end
-end)
+	local function findTarget()
+		local list = gcList()
 
---------------------------------------------------------------------------------
--- Auto-install and diagnostics
---------------------------------------------------------------------------------
+		-- 1) the Anti table itself (plain table; rawget only, the ReadOnly proxy must
+		--    never be indexed from this environment)
+		for _, v in ipairs(list) do
+			if type(v) == "table" then
+				local ok, detected = pcall(rawget, v, "Detected")
+				if ok and type(detected) == "function" then
+					local ok2, add = pcall(rawget, v, "AddDetector")
+					local ok3, locked = pcall(rawget, v, "RLocked")
+					if ok2 and ok3 and type(add) == "function" and type(locked) == "function" then
+						return detected, "table"
+					end
+				end
+			end
+		end
 
-task.wait(5) -- Let Adonis load first
-local result = InstallBypass()
+		-- 2) fallback: best scoring closure holding a network client handle
+		local best, bestScore = nil, 0
+		for _, v in ipairs(list) do
+			if type(v) == "function" then
+				local uvs = upvaluesOf(v)
+				if uvs then
+					local score, handles = scanUpvalues(uvs)
+					if handles > 0 and score > bestScore then
+						best, bestScore = v, score
+					end
+				end
+			end
+		end
 
--- Build diagnostic log
-local diagLines = {}
-local function log(...) 
-    local msg = table.concat({...}, "\t")
-    table.insert(diagLines, msg)
-    print(msg)
-end
+		if best then
+			return best, "closure"
+		end
+		return nil, nil
+	end
 
-log("========================================")
-log("[Novus] Anti-Detection Diagnostics")
-log("========================================")
-log(string.format("[Novus] Executor: %s", identifyexecutor and pcall(identifyexecutor) and identifyexecutor() or "Unknown"))
-log(string.format("[Novus] Thread Identity: %d", pcall(getthreadidentity) and getthreadidentity() or -1))
-log(string.format("[Novus] hiddenprops API: %s", CAPS.hasHiddenProps and "YES" or "NO"))
-log(string.format("[Novus] GC access: %s", CAPS.hasGC and "YES" or "NO"))
-log(string.format("[Novus] Detected neutered: %s", result and "YES" or "NO  (will retry every 8s)"))
-log(string.format("[Novus] WalkSpeed safe: %s", CAPS.hasHiddenProps and "YES (hidden)" or "NO (Changed event)"))
-log("========================================")
-log("[Novus] Ready. Load your script now.")
-log("========================================")
+	------------------------------------------------------------------------------
+	-- neuter
+	------------------------------------------------------------------------------
+	local function describe(uvs)
+		local parts = {}
+		for i = 1, #uvs do
+			local uv = uvs[i]
+			if uv == nil then
+				parts[#parts + 1] = i .. ":nil"
+			else
+				local class = classNameOf(uv)
+				parts[#parts + 1] = i .. ":" .. (class or type(uv))
+			end
+		end
+		return table.concat(parts, " ")
+	end
 
--- Dump to file on share so Magnus can read it
-pcall(function()
-    writefile("scripts/novus_diag.txt", table.concat(diagLines, "\n"))
-end)
+	local function neuter(fn, verbose)
+		local uvs = upvaluesOf(fn)
+		if not uvs then
+			return false, "no-upvalues-api"
+		end
 
--- Expose globally so the main script can use safe setters
-getgenv().NovusBypass = {
-    Install = InstallBypass,
-    SetWalkSpeed = setWalkSpeedSafe,
-    SetJumpPower = setJumpPowerSafe,
-    IsActive = function() return DetectedNeutered end,
-    WriteProperty = function(instance, property, value)
-        if CAPS.hasHiddenProps then
-            return pcall(sethiddenproperty, instance, property, value)
-        end
-        instance[property] = value
-    end,
-}
+		local targets = 0
+		for i = 1, #uvs do
+			if isHandle(uvs[i]) then
+				targets += 1
+			end
+		end
 
-return getgenv().NovusBypass
-end)() -- end bypass scope
+		if targets == 0 then
+			-- nothing to strip: this build's Detected cannot reach the network at all
+			if verbose then
+				note("[ac] upvalues: " .. describe(uvs))
+			end
+			return true, "inert"
+		end
 
----------------------------------------------------------------------
--- GENERIC EXECUTOR DETECTION BLOCK (Airship Assault Scripts #46/#47)
----------------------------------------------------------------------
--- Ported from the airship fork. These detect executors via capability
--- probes, so they apply to any game using the same patterns:
---   #46: game:_() → error handler → pcall(getfenv, 7) → FireServer+Kick
---   #47: pcall(SaveScriptProfilingData) → error-string compare → FireServer
--- All blocks use hookfunction ONLY (no hookmetamethod — that corrupted
--- game internals in Airship and caused the delayed ban).
+		local nuked = 0
+		for i = 1, #uvs do
+			if isHandle(uvs[i]) then
+				if pcall(setupvalue, fn, i, nil) then
+					nuked += 1
+				end
+			end
+		end
 
-pcall(function()
-    local lp = game.Players.LocalPlayer
-    if lp and lp.Kick then
-        hookfunction(lp.Kick, function() end)
-    end
-end)
+		local after = upvaluesOf(fn)
+		local left = 0
+		if after then
+			for i = 1, #after do
+				if isHandle(after[i]) then
+					left += 1
+				end
+			end
+		end
 
-pcall(function()
-    local profiler = game:GetService("ScriptProfilerService")
-    if profiler and profiler.SaveScriptProfilingData then
-        hookfunction(profiler.SaveScriptProfilingData, function(...)
-            pcall(function()
-                error("The current thread cannot call 'SaveScriptProfilingData' (lacking capability RobloxScript)", 2)
-            end)
-        end)
-    end
-end)
+		return (nuked > 0 and left == 0), string.format("handles=%d nuked=%d left=%d", targets, nuked, left)
+	end
 
-pcall(function()
-    if getfenv then
-        local realGetfenv = getfenv
-        hookfunction(getfenv, function(level)
-            local ok, result = pcall(function()
-                if tonumber(level) and level >= 3 then
-                    error("invalid argument #1 to 'getfenv' (invalid level)", 2)
-                end
-                return realGetfenv(level)
-            end)
-            if ok then return result end
-            return realGetfenv(level)
-        end)
-    end
-end)
+	------------------------------------------------------------------------------
+	-- installer
+	------------------------------------------------------------------------------
+	local function installOnce(pass, verbose)
+		local fn, how = findTarget()
+		if not fn then
+			if pass == 1 or pass % 30 == 0 then
+				note(string.format("[ac] pass %d: no candidate yet", pass))
+			end
+			return false
+		end
+		local ok, info = neuter(fn, verbose)
+		note(string.format("[ac] pass %d via %s: %s", pass, tostring(how), tostring(info)))
+		return ok, info
+	end
 
-print("[Novus] Executor detection blocked")
+	local function startInstaller()
+		task.spawn(function()
+			for pass = 1, MAX_PASSES do
+				local ok, info = installOnce(pass, pass == 1)
+				if ok then
+					installed = true
+					mode = tostring(info)
+					note("[ac] state: " .. mode)
+					return
+				end
+				task.wait(RETRY_DELAY + math.min(pass, 8))
+			end
+			note("[ac] gave up: no candidate matched (late load or unknown build)")
+		end)
+	end
+
+	task.spawn(function()
+		local checks = 0
+		while checks < 20 do
+			task.wait(30)
+			checks += 1
+			if installed then
+				local fn = findTarget()
+				if fn then
+					local ok, info = neuter(fn, false)
+					if not ok then
+						installed = false
+						mode = "lost"
+						note("[ac] re-check lost the handle: " .. tostring(info))
+					end
+				end
+			end
+		end
+	end)
+
+	------------------------------------------------------------------------------
+	-- movement helpers (API kept identical)
+	------------------------------------------------------------------------------
+	local function writeProp(instance, property, value)
+		if type(sethiddenproperty) == "function" then
+			if pcall(sethiddenproperty, instance, property, value) then
+				return true
+			end
+		end
+		return pcall(function()
+			instance[property] = value
+		end)
+	end
+
+	local function setWalkSpeedSafe(value)
+		local char = LocalPlayer and LocalPlayer.Character
+		if not char then
+			return false
+		end
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if not hum then
+			return false
+		end
+		return writeProp(hum, "WalkSpeed", value)
+	end
+
+	local function setJumpPowerSafe(value)
+		local char = LocalPlayer and LocalPlayer.Character
+		if not char then
+			return false
+		end
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if not hum then
+			return false
+		end
+		return writeProp(hum, "JumpPower", value)
+	end
+
+	------------------------------------------------------------------------------
+	startInstaller()
+
+	getgenv().NovusBypass = {
+		IsActive = function()
+			return installed
+		end,
+		Mode = function()
+			return mode
+		end,
+		Install = function()
+			return installOnce(-1, true)
+		end,
+		SetWalkSpeed = setWalkSpeedSafe,
+		SetJumpPower = setJumpPowerSafe,
+		WriteProperty = writeProp,
+		Log = note,
+	}
+
+	return getgenv().NovusBypass
+end)()
+
+getgenv().NovusBuild = "novus.lua 2026-11-06 00:25 dab5b4af"
+
+
+
+
+
+
+
+
+
+
+
+
 
 -- Novus Combat Hub
 
@@ -353,6 +368,23 @@ local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera      = Workspace.CurrentCamera
+-- Mouse position in the same space as Camera:WorldToViewportPoint (viewport).
+-- UIS:GetMouseLocation returns screen space, which on this client is 58 px taller
+-- (measured three ways: WorldToScreenPoint-WorldToViewportPoint, Mouse.Y vs
+-- GetMouseLocation, ScreenGui.AbsoluteSize = 1440-58). Flip at runtime with
+-- getgenv().NOVUS_MOUSE_SPACE = "raw" to get the original behaviour back.
+local function AimMousePos()
+	local m = UIS:GetMouseLocation()
+	-- default "raw" = the author's original delta (unchanged behaviour).
+	-- set getgenv().NOVUS_MOUSE_SPACE = "inset" before loading to convert the
+	-- screen-space cursor into the viewport space used by WorldToViewportPoint
+	-- (that shifts the aim point 58 px lower on this client).
+	if (getgenv().NOVUS_MOUSE_SPACE or "raw") == "inset" then
+		return m - GuiService:GetGuiInset()
+	end
+	return m
+end
+
 local Mouse       = LocalPlayer:GetMouse()
 
 ---------------------------------------------------------------------
@@ -625,7 +657,7 @@ local function GetClosest(enabled,
 
     local cameraPos = Camera.CFrame.Position
     local closestHit, closestMag = nil, fovRadius
-    local mousePos = UIS:GetMouseLocation()
+    local mousePos = AimMousePos()
 
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr == LocalPlayer then continue end
@@ -1603,9 +1635,12 @@ SilentFOVCircle.Visible = false
 local TriggerFOVCircle = Drawing.new("Circle")
 TriggerFOVCircle.Visible = false
 
+-- Mouse aim gain. >1 is allowed because the game applies its own mouse multiplier
+-- to cursor movement; the closed-loop gain is (sens/100) * gameK.
 local function AimAt(hitbox, sensitivity)
     if not hitbox then return end
-    local mouseLoc = UIS:GetMouseLocation()
+    sensitivity = tonumber(sensitivity) or 1
+    local mouseLoc = AimMousePos()
     local dx = (hitbox[4].X - mouseLoc.X) * sensitivity
     local dy = (hitbox[4].Y - mouseLoc.Y) * sensitivity
     if mousemoverel then
@@ -1721,9 +1756,16 @@ RunService.RenderStepped:Connect(function()
             if plr and plr.Parent and char and char.Parent and part and part.Parent and hum and hum.Health > 0 then
                 if not Config.Aimbot.TeamCheck or InEnemyTeam(true, plr) then
                     if not Config.Aimbot.DistanceCheck or WithinReach(true, (part.Position - Camera.CFrame.Position).Magnitude, Config.Aimbot.DistanceLimit) then
-                        local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                        local targetPos = part.Position
+                        -- Apply prediction for lock aim (same as novus_silent.lua)
+                        if Config.Aimbot.Prediction and Config.Prediction.ProjectileSpeed > 0 then
+                            local dist = (targetPos - Camera.CFrame.Position).Magnitude
+                            local travelTime = dist / Config.Prediction.ProjectileSpeed
+                            targetPos = SolveTrajectory(targetPos, part.AssemblyLinearVelocity, travelTime, Config.Prediction.Gravity, Config.Prediction.GravityCorrection)
+                        end
+                        local screenPos, onScreen = Camera:WorldToViewportPoint(targetPos)
                         if onScreen then
-                            local mousePos = UIS:GetMouseLocation()
+                            local mousePos = AimMousePos()
                             local mag = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
                             if not Config.Aimbot.VisibilityCheck or not ObjectOccluded(true, Camera.CFrame.Position, part.Position, char) then
                                 hit = {plr, char, part, Vector2.new(screenPos.X, screenPos.Y)}
@@ -2124,7 +2166,7 @@ end
 
 local function SaveConfig(name)
 	if not isfolder(CONFIG_FOLDER) then
-		makefolder(CONFIG_FOLDER)
+		pcall(makefolder, CONFIG_FOLDER)
 	end
 
 	local data = SerializeSettings()
@@ -2140,7 +2182,7 @@ local function SaveConfig(name)
 		return false
 	end
 
-	writefile(GetConfigPath(name), encoded)
+	pcall(writefile, GetConfigPath(name), encoded)
 	ui.notify({
 		title = "Config",
 		message = "Saved: " .. name,
@@ -2185,7 +2227,7 @@ end
 local function DeleteConfig(name)
 	local path = GetConfigPath(name)
 	if isfile(path) then
-		delfile(path)
+		pcall(delfile, path)
 		ui.notify({
 			title = "Config",
 			message = "Deleted: " .. name,
@@ -2202,22 +2244,23 @@ end
 
 local function SetDefaultConfig(name)
 	if not isfolder(CONFIG_FOLDER) then
-		makefolder(CONFIG_FOLDER)
+		pcall(makefolder, CONFIG_FOLDER)
 	end
-	writefile(CONFIG_FOLDER .. "/" .. DEFAULT_CONFIG_FILE, name)
+	pcall(writefile, CONFIG_FOLDER .. "/" .. DEFAULT_CONFIG_FILE, name)
 end
 
 local function ClearDefaultConfig()
 	local path = CONFIG_FOLDER .. "/" .. DEFAULT_CONFIG_FILE
 	if isfile(path) then
-		delfile(path)
+		pcall(delfile, path)
 	end
 end
 
 local function GetDefaultConfig()
 	local path = CONFIG_FOLDER .. "/" .. DEFAULT_CONFIG_FILE
 	if isfile(path) then
-		local name = readfile(path)
+		local okRead, name = pcall(readfile, path)
+			if not okRead then name = nil end
 		if name and name ~= "" then
 			return name
 		end
@@ -2258,7 +2301,7 @@ do
     AimDep:AddToggle('AimbotDistCheck', { Text = 'Distance Check', Default = Config.Aimbot.DistanceCheck })
     AimDep:AddToggle('AimbotVisCheck', { Text = 'Visibility Check', Default = Config.Aimbot.VisibilityCheck })
     AimDep:AddToggle('AimbotPred', { Text = 'Prediction', Default = Config.Aimbot.Prediction })
-    AimDep:AddInput('AimbotSens', { Default = tostring(Config.Aimbot.Sensitivity), Numeric = true, Finished = true, Text = 'Sensitivity', Placeholder = tostring(Config.Aimbot.Sensitivity) })
+    AimDep:AddInput('AimbotSens', { Default = tostring(Config.Aimbot.Sensitivity), Numeric = true, Finished = false, Text = 'Sensitivity', Placeholder = tostring(Config.Aimbot.Sensitivity) })
     AimDep:AddToggle('AimbotAutoFire', { Text = 'Auto-Fire (100% sens only)', Default = false })
     AimDep:AddInput('AimbotFOV', { Default = tostring(Config.Aimbot.FOVRadius), Numeric = true, Finished = true, Text = 'FOV Radius', Placeholder = tostring(Config.Aimbot.FOVRadius) })
     AimDep:AddInput('AimbotDist', { Default = tostring(Config.Aimbot.DistanceLimit), Numeric = true, Finished = true, Text = 'Distance Limit', Placeholder = tostring(Config.Aimbot.DistanceLimit) })
@@ -2276,7 +2319,7 @@ do
         c.DistanceCheck = Toggles.AimbotDistCheck.Value
         c.VisibilityCheck = Toggles.AimbotVisCheck.Value
         c.Prediction = Toggles.AimbotPred.Value
-        c.Sensitivity = tonumber(Options.AimbotSens.Value)
+        c.Sensitivity = tonumber(Options.AimbotSens.Value) or 100
         c.FOVRadius = tonumber(Options.AimbotFOV.Value)
         c.DistanceLimit = tonumber(Options.AimbotDist.Value)
         c.PriorityIndex = table.find({'Closest', 'Head', 'HumanoidRootPart', 'Random'}, Options.AimbotPriority.Value) or 1
@@ -2558,6 +2601,16 @@ Library.ToggleKeybind = Options.MenuKeybind
 
 -- Load auto config
 SaveManager:LoadAutoloadConfig()
+
+-- The saved config can hold a sensitivity above the clamp (e.g. 600 from an older
+-- session). Push the clamped value back into the box so the number on screen is the
+-- number the aim actually uses.
+pcall(function()
+	local v = tostring(Config.Aimbot.Sensitivity)
+	if Options.AimbotSens and tostring(Options.AimbotSens.Value) ~= v then
+		Options.AimbotSens:SetValue(v)
+	end
+end)
 
 -- Cleanup
 Library:OnUnload(function()
